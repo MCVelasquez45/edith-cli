@@ -135,9 +135,11 @@ export class EdithAgentCore {
     if (/\b(meetings?|events?)\b.*\b(left|remaining|today|tomorrow|afternoon)\b|\bwhat do i have (left|going on)\b/.test(lower)) {
       return { route: 'context:events', reason: 'calendar context request' };
     }
-    if (/\b(unread|important)\b.*\b(email|mail|messages?)\b|\b(email|mail)\b.*\b(unread|important)\b/.test(lower)) {
+    if (/\b(unread|important|latest|recent)\b.*\b(email|mail|messages?)\b|\b(email|mail)\b.*\b(unread|important|latest|recent)\b/.test(lower)) {
       return { route: 'context:email', reason: 'email context request' };
     }
+    if (/\b(tasks?|to dos?|todos?)\b.*\b(due|have|open|today|tomorrow)?\b|\bwhat tasks\b/.test(lower)) return { route: 'context:tasks', reason: 'task context request' };
+    if (/\b(drive|files?)\b.*\b(find|search|list|latest|recent)\b|\bfind files\b/.test(lower)) return { route: 'context:drive', reason: 'Drive context request' };
     if (/\b(review requests?|need to review|github reviews?|gitlab reviews?|assigned issues?)\b/.test(lower)) {
       return { route: 'context:development', reason: 'development context request' };
     }
@@ -189,6 +191,8 @@ export class EdithAgentCore {
     if (plan.route === 'context:events-tomorrow') return this.answerEventsTomorrow(events);
     if (plan.route === 'context:events') return this.answerEventsToday(events);
     if (plan.route === 'context:email') return this.answerUnreadEmail(events);
+    if (plan.route === 'context:tasks') return this.answerTasks(events);
+    if (plan.route === 'context:drive') return this.answerDrive(events, userText);
     if (plan.route === 'context:development') return this.answerDevelopmentContext(events);
     if (plan.route === 'status:model') return this.answerModelStatus();
     if (plan.route === 'workspace:cwd') return this.answerWorkspaceStatus();
@@ -288,10 +292,10 @@ export class EdithAgentCore {
   }
 
   answerMutationBlocked(events) {
-    events.activity?.('Enforcing read-only personal context policy');
-    this.trace.push({ type: 'policy', title: 'Blocking personal-context mutation' });
+    events.activity?.('Checking Google action confirmation policy');
+    this.trace.push({ type: 'policy', title: 'Google action requires explicit confirmation' });
     return {
-      text: 'Personal context is read-only in this phase. I can inspect and summarize connected calendars, email, tasks, GitHub, and GitLab, but I cannot send email, modify events, update tasks, create issues, merge PRs/MRs, or mutate external systems.',
+      text: 'Personal Google writes are authorized but not automatic. I need an explicit confirmation step with the exact operation and affected resource before creating, modifying, sending, sharing, or deleting anything. I did not perform any write action.',
       route: 'context:mutation-blocked'
     };
   }
@@ -362,11 +366,31 @@ export class EdithAgentCore {
   }
 
   async answerUnreadEmail(events) {
-    events.activity?.('Checking unread email');
-    this.trace.push({ type: 'tool', tool: 'context_unread_email', title: 'Checking unread email' });
+    events.activity?.('Checking Gmail');
+    this.trace.push({ type: 'tool', tool: 'context_unread_email', title: 'Checking Gmail' });
     const messages = await this.contextEngine.getUnreadMessages();
     if (!messages.length) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Email') || 'No unread email was returned by configured read-only sources.', route: 'context:email' };
     return { text: messages.map((message) => `${message.title} (${sourceLabel(message)})`).join('\n'), route: 'context:email' };
+  }
+
+  async answerTasks(events) {
+    events.activity?.('Checking Google Tasks');
+    this.trace.push({ type: 'tool', tool: 'context_tasks', title: 'Checking Google Tasks' });
+    const tasks = await this.contextEngine.getOpenTasks();
+    if (!tasks.length) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Google Tasks') || 'No open tasks were returned by configured task sources.', route: 'context:tasks' };
+    return { text: tasks.map((task) => `${task.title}${task.dueAt ? ` due ${task.dueAt}` : ''} (${sourceLabel(task)})`).join('\n'), route: 'context:tasks' };
+  }
+
+  async answerDrive(events, userText) {
+    events.activity?.('Searching Google Drive');
+    this.trace.push({ type: 'tool', tool: 'context_drive', title: 'Searching Google Drive' });
+    const connector = this.contextRegistry.connectors.find((item) => item.sourceType === 'drive' && item.searchFiles);
+    const status = await this.contextRegistry.status();
+    const row = status.find((item) => item.id === connector?.id);
+    if (!connector || row?.health !== ConnectorHealth.CONNECTED) return { text: sourceUnavailableText(status, 'Google Drive') || 'No connected Drive source is available.', route: 'context:drive' };
+    const query = extractDriveQuery(userText);
+    const files = await connector.searchFiles({ query, limit: 8 });
+    return { text: files.length ? files.map((file) => `${file.title} (${sourceLabel(file)})${file.url ? `\n${file.url}` : ''}`).join('\n') : 'No Drive files matched that query.', route: 'context:drive' };
   }
 
   async answerDevelopmentContext(events) {
@@ -624,6 +648,13 @@ function formatDateTime(value) {
 function startOfLocalTomorrow() {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+}
+
+function extractDriveQuery(text) {
+  const match = text.match(/\b(?:drive|files?)\b.*?(?:for|named|called)\s+(.+)$/i);
+  if (!match) return 'trashed=false';
+  const term = match[1].replace(/[?.!]+$/, '').trim().replace(/'/g, "\\'");
+  return `name contains '${term}' and trashed=false`;
 }
 
 function parseModelArg(value) {

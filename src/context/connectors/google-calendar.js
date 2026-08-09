@@ -18,8 +18,8 @@ export class GoogleCalendarConnector {
     this.authProvider = authProvider;
     this.fetch = fetchImpl;
     this.limit = limit;
-    this.capabilities = ['calendars.read', 'events.read'];
-    this.readOnly = true;
+    this.capabilities = ['calendars.read', 'events.read', 'events.create', 'events.update', 'events.delete', 'events.respond'];
+    this.readOnly = false;
     this._status = null;
     this._calendars = null;
   }
@@ -35,7 +35,7 @@ export class GoogleCalendarConnector {
         profile: this.profile,
         health: auth.status === AuthState.NOT_CONFIGURED ? ConnectorHealth.NOT_CONFIGURED : ConnectorHealth.UNAVAILABLE,
         capabilities: this.capabilities,
-        readOnly: true,
+        readOnly: this.readOnly,
         lastSync: null,
         detail: `Google profile ${this.profile}: ${auth.status}. ${auth.detail}`
       };
@@ -49,7 +49,7 @@ export class GoogleCalendarConnector {
         profile: this.profile,
         health: ConnectorHealth.NOT_CONFIGURED,
         capabilities: this.capabilities,
-        readOnly: true,
+        readOnly: this.readOnly,
         lastSync: null,
         detail: `Google profile ${this.profile} is connected but lacks Calendar read-only scope. Run edith auth google --profile ${this.profile} --scope calendar.`
       };
@@ -64,9 +64,9 @@ export class GoogleCalendarConnector {
         profile: this.profile,
         health: ConnectorHealth.CONNECTED,
         capabilities: this.capabilities,
-        readOnly: true,
+        readOnly: this.readOnly,
         lastSync: new Date().toISOString(),
-        detail: `Google Calendar read-only connected; calendars discovered: ${calendars.totalCount ?? calendars.items.length}.`,
+        detail: `Google Calendar connected; calendars discovered: ${calendars.totalCount ?? calendars.items.length}.`,
         calendarCount: calendars.totalCount ?? calendars.items.length
       };
       return this._status;
@@ -144,8 +144,43 @@ export class GoogleCalendarConnector {
     return (await this.getEventsAfter(now, { limit: 10 }))[0] ?? null;
   }
 
+  async createEvent({ calendarId = 'primary', summary, start, end, description = '', attendees = [] }) {
+    const token = await this.authProvider.accessToken({ requiredScopes: [GOOGLE_SCOPE_REGISTRY.calendarPersonal.scopes[2]] });
+    const body = {
+      summary,
+      description,
+      start: { dateTime: start.toISOString() },
+      end: { dateTime: end.toISOString() },
+      ...(attendees.length ? { attendees: attendees.map((email) => ({ email })) } : {})
+    };
+    const data = await this.googleRequest(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events`, token.accessToken, { method: 'POST', body });
+    const calendar = (this._calendars ?? (await this.getCalendars()).items).find((item) => item.id === calendarId) ?? { id: calendarId, title: calendarId };
+    return normalizeEvent({ event: data, calendar, profile: token.profile, account: token.account });
+  }
+
+  async updateEvent({ calendarId = 'primary', eventId, patch }) {
+    const token = await this.authProvider.accessToken({ requiredScopes: [GOOGLE_SCOPE_REGISTRY.calendarPersonal.scopes[2]] });
+    const data = await this.googleRequest(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, token.accessToken, { method: 'PATCH', body: patch });
+    const calendar = (this._calendars ?? (await this.getCalendars()).items).find((item) => item.id === calendarId) ?? { id: calendarId, title: calendarId };
+    return normalizeEvent({ event: data, calendar, profile: token.profile, account: token.account });
+  }
+
+  async deleteEvent({ calendarId = 'primary', eventId }) {
+    const token = await this.authProvider.accessToken({ requiredScopes: [GOOGLE_SCOPE_REGISTRY.calendarPersonal.scopes[2]] });
+    await this.googleRequest(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, token.accessToken, { method: 'DELETE' });
+    return { id: eventId, source: 'google-calendar', sourceAccount: token.profile, deleted: true };
+  }
+
   async googleGet(url, accessToken) {
-    const response = await this.fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
+    return this.googleRequest(url, accessToken);
+  }
+
+  async googleRequest(url, accessToken, { method = 'GET', body = null } = {}) {
+    const response = await this.fetch(url, {
+      method,
+      headers: { authorization: `Bearer ${accessToken}`, ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : null
+    });
     const text = await response.text();
     const json = text ? JSON.parse(text) : {};
     if (!response.ok) throw new Error(json.error?.message || json.error_description || 'Google Calendar API request failed.');

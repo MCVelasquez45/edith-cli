@@ -42,15 +42,33 @@ export class ContextQueryEngine {
   }
 
   async getUnreadMessages() {
-    return [];
+    const rows = await this.registry.status();
+    const results = [];
+    for (const connector of this.registry.connectors.filter((item) => item.sourceType === 'email')) {
+      const row = rows.find((item) => item.id === connector.id);
+      if (row?.health === ConnectorHealth.CONNECTED && connector.unreadMessages) results.push(...await connector.unreadMessages({ limit: 10 }));
+    }
+    return limitItems(results, 10);
   }
 
-  async searchMessages() {
-    return [];
+  async searchMessages({ query = '', limit = 10 } = {}) {
+    const rows = await this.registry.status();
+    const results = [];
+    for (const connector of this.registry.connectors.filter((item) => item.sourceType === 'email')) {
+      const row = rows.find((item) => item.id === connector.id);
+      if (row?.health === ConnectorHealth.CONNECTED && connector.searchMessages) results.push(...await connector.searchMessages({ query, limit }));
+    }
+    return limitItems(results, limit);
   }
 
   async getOpenTasks() {
-    return [];
+    const rows = await this.registry.status();
+    const results = [];
+    for (const connector of this.registry.connectors.filter((item) => item.sourceType === 'task')) {
+      const row = rows.find((item) => item.id === connector.id);
+      if (row?.health === ConnectorHealth.CONNECTED && connector.openTasks) results.push(...await connector.openTasks({ limit: 20 }));
+    }
+    return limitItems(results, 20);
   }
 
   async getOverdueTasks(now = new Date()) {

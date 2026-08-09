@@ -21,14 +21,14 @@ describe('personal context routing and safety', () => {
     assert.equal(core.route('How did we do today?').route, 'context:end-of-day');
   });
 
-  it('blocks external mutation requests before model fallback', async () => {
+  it('routes external mutation requests to explicit confirmation before model fallback', async () => {
     const core = new EdithAgentCore();
     const plan = core.route('Move my next meeting to tomorrow.');
 
     assert.equal(plan.route, 'context:mutation-blocked');
     const result = await core.executePlan(plan, 'Move my next meeting to tomorrow.', {});
-    assert.match(result.text, /read-only/i);
-    assert.match(result.text, /cannot/i);
+    assert.match(result.text, /explicit confirmation/i);
+    assert.match(result.text, /did not perform/i);
   });
 
   it('does not expose personal-context mutation tools', () => {

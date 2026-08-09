@@ -2,6 +2,10 @@ import { NotConfiguredConnector } from './connectors/base.js';
 import { GitHubConnector } from './connectors/github.js';
 import { GitLabConnector } from './connectors/gitlab.js';
 import { GoogleCalendarConnector } from './connectors/google-calendar.js';
+import { GoogleGmailConnector } from './connectors/google-gmail.js';
+import { GoogleDriveConnector, GoogleDocsConnector } from './connectors/google-drive-docs.js';
+import { GoogleTasksConnector } from './connectors/google-tasks.js';
+import { GoogleContactsConnector } from './connectors/google-contacts.js';
 import { ConnectorHealth } from './models.js';
 
 export class ContextConnectorRegistry {
@@ -9,18 +13,11 @@ export class ContextConnectorRegistry {
     this.cwd = cwd;
     this.connectors = connectors ?? [
       new GoogleCalendarConnector({ profile: 'personal' }),
-      new NotConfiguredConnector({
-        id: 'email',
-        name: 'Email',
-        sourceType: 'email',
-        capabilities: ['messages.read', 'messages.search']
-      }),
-      new NotConfiguredConnector({
-        id: 'tasks',
-        name: 'Tasks',
-        sourceType: 'task',
-        capabilities: ['tasks.read']
-      }),
+      new GoogleGmailConnector({ profile: 'personal' }),
+      new GoogleDriveConnector({ profile: 'personal' }),
+      new GoogleDocsConnector({ profile: 'personal' }),
+      new GoogleTasksConnector({ profile: 'personal' }),
+      new GoogleContactsConnector({ profile: 'personal' }),
       new GitHubConnector({ cwd }),
       new GitLabConnector({ cwd })
     ];
