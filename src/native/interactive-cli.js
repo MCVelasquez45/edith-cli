@@ -32,7 +32,7 @@ export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
   const rl = createInterface({
     input,
     output,
-    terminal: true,
+    terminal: Boolean(input.isTTY && output.isTTY),
     historySize: 200,
     removeHistoryDuplicates: true
   });

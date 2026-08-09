@@ -123,6 +123,12 @@ export class EdithAgentCore {
   route(text) {
     const lower = text.toLowerCase();
     if (/^reply with exactly\b/.test(lower)) return { route: 'local', reason: 'exact response request' };
+    if (/^(ready|hello|hey|hi|thanks|thank you|cool|let'?s go)[.!\s]*$/i.test(text.trim())) {
+      return { route: 'local:ack', reason: 'short conversational acknowledgement' };
+    }
+    if (/\b(can you|are you able to|do you have access to)\b.*\b(modify|change|create|update|delete|send|write|manage)\b|\bwhat can you (modify|change|create|update|delete|send|write|manage)\b/.test(lower)) {
+      return { route: 'status:permissions', reason: 'permission capability request' };
+    }
     if (isExplicitNoLiveRequest(lower) && isLiveWeatherRequest(lower, this.lastWeatherLocation)) {
       return { route: 'live:requires-tool', reason: 'explicit request to avoid live retrieval for stale weather data' };
     }
@@ -157,6 +163,7 @@ export class EdithAgentCore {
     if (/\btimezone\b|\btime\s+zone\b/.test(lower)) return { route: 'system:timezone', reason: 'timezone request' };
     if (/\bsystem info\b|\babout this mac\b|\bwhat machine\b/.test(lower)) return { route: 'system:info', reason: 'system information request' };
     if (/\bwhat agents\b|\bagents can you\b|\bcan you use\b.*\bagents\b|\bis claude available\b/.test(lower)) return { route: 'status:agents', reason: 'agent availability request' };
+    if (/\bwhat tools can you use\b|\bwhich tools can you use\b|\bavailable tools\b|\btool access\b/.test(lower)) return { route: 'status:tools', reason: 'tool capability request' };
     if (/\bcan you search the web\b|\bweb search configured\b/.test(lower)) return { route: 'status:web', reason: 'web capability request' };
     if (isLiveWeatherRequest(lower, this.lastWeatherLocation)) return { route: 'network:weather', reason: 'live weather request' };
     if (/\bopen (the )?(first|second|third|\d+)( source| result)?\b|\b(second|third) source\b/.test(lower)) {
@@ -184,11 +191,14 @@ export class EdithAgentCore {
   }
 
   async executePlan(plan, userText, events) {
+    if (plan.route === 'local:ack') return { text: acknowledgement(userText), route: 'local:ack' };
     if (plan.route === 'system:time') return this.answerCurrentTime(userText, events);
     if (plan.route === 'system:date') return this.answerCurrentDate(userText, events);
     if (plan.route === 'system:timezone') return this.answerTimezone(events);
     if (plan.route === 'system:info') return this.answerSystemInfo(events);
     if (plan.route === 'status:agents') return this.answerAgentStatus(events);
+    if (plan.route === 'status:tools') return this.answerToolStatus();
+    if (plan.route === 'status:permissions') return this.answerPermissionStatus();
     if (plan.route === 'status:web') return this.answerWebStatus(events);
     if (plan.route === 'live:requires-tool') return this.answerLiveRequiresTool(events);
     if (plan.route === 'network:weather') return this.answerWeather(userText, events);
@@ -226,6 +236,32 @@ export class EdithAgentCore {
     const status = this.status();
     const text = `I am using ${status.model} through ${status.provider}.`;
     return { text, route: 'status:model' };
+  }
+
+  answerToolStatus() {
+    const available = this.toolRegistry.list()
+      .filter((tool) => tool.availability === 'AVAILABLE')
+      .map((tool) => tool.id);
+    const unavailable = this.toolRegistry.list()
+      .filter((tool) => tool.availability !== 'AVAILABLE')
+      .map((tool) => `${tool.id} (${tool.availability.toLowerCase()})`);
+    const lines = [`I can use these active tools: ${available.join(', ') || 'none'}.`];
+    if (unavailable.length) lines.push(`Unavailable right now: ${unavailable.join(', ')}.`);
+    return { text: lines.join('\n'), route: 'status:tools' };
+  }
+
+  answerPermissionStatus() {
+    const workspaceWrite = this.toolRegistry.list().some((tool) => tool.availability === 'AVAILABLE' && /write|execute|shell/i.test(`${tool.id} ${tool.risk} ${tool.permissions?.join(' ')}`));
+    const connected = (this.contextStatusRows ?? []).filter((row) => row.health === ConnectorHealth.CONNECTED);
+    const writable = connected
+      .filter((row) => (row.capabilities ?? []).some((capability) => /\.write$|\.send$|\.manage$|\.delete$|\.create$|\.update$|\.complete$|\.respond$/.test(capability)))
+      .map((row) => `${row.sourceType} (${row.capabilities.filter((capability) => !/\.read$/.test(capability)).join(', ')})`);
+    const lines = [
+      `Workspace changes: ${workspaceWrite ? 'available through approved tools' : 'not available as a native tool'}.`,
+      `Google and personal-context writes: ${writable.length ? `available with explicit confirmation for ${writable.join('; ')}` : 'not currently connected or not authorized'}.`,
+      'Sending, sharing, deleting, and other sensitive or destructive actions require explicit confirmation.'
+    ];
+    return { text: lines.join('\n'), route: 'status:permissions' };
   }
 
   answerWorkspaceStatus() {
@@ -719,12 +755,15 @@ export class EdithAgentCore {
       'You are EDITH, the primary local-first AI orchestrator for this Mac.',
       'Prefer local models and read-only workspace tools when sufficient.',
       'OpenCode, Codex, and Claude are specialist agents that EDITH may delegate to when appropriate.',
-      'Respect workspace boundaries. Do not expose secrets. Destructive work requires an approved specialist path.',
+      'Respect workspace boundaries. Do not expose secrets. Workspace writes and personal/external writes require approved tools and confirmation; destructive work requires explicit confirmation.',
       'Use EDITH tools for live state. Never guess current time, date, timezone, Git branch, agent health, or web availability.',
       'Weather, markets, sports scores, current events, local business status, current prices, and latest software versions require live tools or a clear unavailable/error response.',
+      'Runtime capability information below is internal operating context. Do not enumerate or repeat it unless the user explicitly asks about tools, agents, models, permissions, or availability. For ordinary conversation, answer naturally and concisely.',
       `Current model: ${status.model} via ${status.provider}.`,
       `Workspace: ${status.workspace}.`,
-      this.capabilityManifest()
+      '<internal_runtime_context>',
+      this.capabilityManifest(),
+      '</internal_runtime_context>'
     ].join('\n');
   }
 
@@ -739,22 +778,36 @@ export class EdithAgentCore {
       `UNAVAILABLE tools: ${unavailableTools.join(', ') || 'none'}`,
       `Agents: ${agents.join('; ') || 'unknown'}`,
       `Providers: ${providers.join('; ') || 'unknown'}`,
-      'Workspace permissions: read/search/git status/git diff only; no native write or shell execution.',
-      'Network permissions: public HTTP/HTTPS fetch only; localhost/private network/file URLs blocked.',
+      `Workspace permissions: ${this.workspacePermissionManifest()}.`,
+      `Network permissions: ${this.networkPermissionManifest()}.`,
       this.contextCapabilityManifest()
     ].join('\n');
   }
 
   contextCapabilityManifest() {
     const rows = this.contextStatusRows ?? [];
-    const available = rows.filter((row) => row.health === ConnectorHealth.CONNECTED).map((row) => `${row.sourceType}.read`);
+    const available = rows.filter((row) => row.health === ConnectorHealth.CONNECTED).flatMap((row) => (row.capabilities ?? []).map((capability) => `${row.sourceType}.${capability}`));
     const unavailable = rows.filter((row) => row.health !== ConnectorHealth.CONNECTED).map((row) => `${row.sourceType}.read - ${row.health}`);
     return [
       `Personal context AVAILABLE: ${available.join(', ') || 'none'}`,
       `Personal context UNAVAILABLE: ${unavailable.join(', ') || 'none'}`,
-      'Personal context permissions: reads may run automatically; Google personal writes require explicit confirmation; destructive or external writes require explicit confirmation; keep personal context local unless explicitly approved.',
+      'Personal context policy: reads may run automatically; connected writes are confirmation-gated; destructive or external writes require explicit confirmation; keep personal context local unless explicitly approved.',
       this.authCapabilityManifest()
     ].join('\n');
+  }
+
+  workspacePermissionManifest() {
+    const permissions = this.toolRegistry.list()
+      .filter((tool) => tool.availability === 'AVAILABLE')
+      .flatMap((tool) => tool.permissions ?? []);
+    const unique = [...new Set(permissions)];
+    return unique.join(', ') || 'none';
+  }
+
+  networkPermissionManifest() {
+    const networkTools = this.toolRegistry.list().filter((tool) => ['web_search', 'web_fetch', 'docs_lookup', 'weather'].includes(tool.id) && tool.availability === 'AVAILABLE');
+    if (!networkTools.length) return 'unavailable';
+    return `${networkTools.map((tool) => tool.id).join(', ')}; public HTTP/HTTPS only; localhost/private network/file URLs blocked`;
   }
 
   authCapabilityManifest() {
@@ -772,6 +825,14 @@ export class EdithAgentCore {
 function isMutationRequest(lower) {
   return /\b(move|reschedule|cancel|create|update|delete|send|reply|archive|label|complete|merge|push)\b/.test(lower)
     && /\b(meeting|event|calendar|email|mail|message|task|issue|pr|pull request|mr|merge request|github|gitlab)\b/.test(lower);
+}
+
+function acknowledgement(text) {
+  const value = text.trim().toLowerCase();
+  if (value === 'ready') return 'Ready. What are we working on?';
+  if (value === 'thanks' || value === 'thank you') return 'You’re welcome.';
+  if (value === 'cool' || value === "let's go") return 'Sounds good. What should we tackle first?';
+  return 'Hello. What are we working on?';
 }
 
 function isExplicitNoLiveRequest(lower) {

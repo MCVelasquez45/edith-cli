@@ -10,6 +10,42 @@ describe('native agent routing', () => {
     assert.equal(core.route('What model are you using?').route, 'status:model');
   });
 
+  it('keeps ordinary acknowledgements concise and routes explicit capability questions to live status', () => {
+    const core = new EdithAgentCore();
+
+    assert.equal(core.route('ready').route, 'local:ack');
+    assert.equal(core.route('hello').route, 'local:ack');
+    assert.equal(core.route('What tools can you use?').route, 'status:tools');
+    assert.equal(core.route('Can you modify my calendar?').route, 'status:permissions');
+    assert.equal(core.route('Can you send email?').route, 'status:permissions');
+  });
+
+  it('reports live tool and write capabilities without using stale read-only claims', () => {
+    const core = new EdithAgentCore();
+    core.contextStatusRows = [{
+      sourceType: 'calendar',
+      health: 'CONNECTED',
+      capabilities: ['calendars.read', 'events.read', 'events.create', 'events.update', 'events.delete']
+    }];
+    const tools = core.answerToolStatus();
+    const permissions = core.answerPermissionStatus();
+
+    assert.match(tools.text, /current_time/);
+    assert.match(permissions.text, /available with explicit confirmation for calendar/i);
+    assert.doesNotMatch(permissions.text, /read-only phase/i);
+
+    core.router = {
+      modelGroups: [],
+      current: { model: { id: 'test-model' }, providerName: 'test-provider' }
+    };
+    core.workspaceInfo = { workspace: process.cwd() };
+    core.authStatusRows = [];
+    const prompt = core.systemPrompt();
+    assert.match(prompt, /<internal_runtime_context>/);
+    assert.match(prompt, /connected writes are confirmation-gated/);
+    assert.doesNotMatch(prompt, /all read-only/i);
+  });
+
   it('does not redelegate when discussing Codex recommendations', () => {
     const core = new EdithAgentCore();
 
@@ -126,6 +162,31 @@ describe('native agent routing', () => {
     assert.equal((result.text.match(/It began to play/g) ?? []).length, 1);
     assert.equal((streamed.join('').match(/It began to play/g) ?? []).length, 1);
     assert.match(result.text, /[.!?…]$/);
+  });
+
+  it('preserves the first streamed delta exactly', async () => {
+    const core = new EdithAgentCore();
+    core.router = {
+      modelGroups: [],
+      current: { model: { id: 'test-model' }, providerName: 'test-provider' },
+      stream: async () => (async function* stream() {
+        yield 'Ready.';
+        yield ' What are we working on?';
+      })()
+    };
+    core.workspaceInfo = { workspace: process.cwd() };
+    core.agentHealth = [];
+    core.contextStatusRows = [];
+    core.authStatusRows = [];
+    const streamed = [];
+    const result = await core.answerLocal('Say hello', '', {
+      streamStart: () => {},
+      streamChunk: (chunk) => streamed.push(chunk),
+      streamEnd: () => {}
+    });
+
+    assert.equal(streamed.join(''), 'Ready. What are we working on?');
+    assert.equal(result.text, 'Ready. What are we working on?');
   });
 
   it('routes calendar-email correlation to personal context tools', () => {
