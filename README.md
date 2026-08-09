@@ -2,6 +2,7 @@
 
 [![Tests](https://github.com/MCVelasquez45/edith-cli/actions/workflows/test.yml/badge.svg)](https://github.com/MCVelasquez45/edith-cli/actions/workflows/test.yml)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-339933)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Local-first AI orchestration from one terminal.
 
@@ -338,4 +339,4 @@ This repository remains an early-development foundation. `edith doctor` is the l
 
 ## License
 
-No open-source license has been declared yet. The package is currently marked `UNLICENSED`.
+EDITH CLI is released under the [MIT License](LICENSE).
