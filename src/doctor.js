@@ -48,7 +48,7 @@ export async function runDoctor({ cwd, ui }) {
   ui.line(`OK Timeouts: MCP server timeouts configured; agent subprocesses use bounded execution`);
 
   const tools = createDefaultToolRegistry().list();
-  const networkTools = tools.filter((tool) => ['web_search', 'web_fetch', 'documentation_lookup'].includes(tool.id));
+  const networkTools = tools.filter((tool) => ['web_search', 'web_fetch', 'docs_lookup'].includes(tool.id));
   const configuredNetworkTools = networkTools.filter((tool) => tool.availability === 'AVAILABLE').length;
   ui.line(`${configuredNetworkTools ? 'OK' : 'WARN'} Web/documentation tools: ${configuredNetworkTools}/${networkTools.length} backend(s) configured`);
   ui.line('OK Audit events: MCP sessions and tool calls are written with secret redaction');

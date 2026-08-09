@@ -4,6 +4,7 @@ import { createDefaultToolRegistry } from '../tools/registry.js';
 import { loadConfig } from '../config.js';
 import { WorkspaceTools, detectWorkspace } from './workspace-tools.js';
 import { SystemTools, extractTimezoneRequest } from './system-tools.js';
+import { NetworkRegistry } from '../network/providers.js';
 
 const MAX_MESSAGES = 24;
 const MAX_TOOL_CONTEXT = 18000;
@@ -18,6 +19,7 @@ export class EdithAgentCore {
     this.agentRegistry = new AgentRegistry();
     this.toolRegistry = createDefaultToolRegistry();
     this.systemTools = new SystemTools();
+    this.network = new NetworkRegistry();
     this.agentHealth = [];
   }
 
@@ -107,18 +109,23 @@ export class EdithAgentCore {
     if (/\btimezone\b|\btime\s+zone\b/.test(lower)) return { route: 'system:timezone', reason: 'timezone request' };
     if (/\bsystem info\b|\babout this mac\b|\bwhat machine\b/.test(lower)) return { route: 'system:info', reason: 'system information request' };
     if (/\bwhat agents\b|\bagents can you\b|\bcan you use\b.*\bagents\b|\bis claude available\b/.test(lower)) return { route: 'status:agents', reason: 'agent availability request' };
-    if (/\bcan you search the web\b|\bweb search configured\b|\bsearch the web\b/.test(lower)) return { route: 'status:web', reason: 'web capability request' };
+    if (/\bcan you search the web\b|\bweb search configured\b/.test(lower)) return { route: 'status:web', reason: 'web capability request' };
+    if (extractUrl(text)) return { route: 'network:fetch', reason: 'URL fetch request' };
     if (/\bwhat branch\b|\bwhich branch\b|\bbranch am i on\b/.test(lower)) return { route: 'workspace:branch', reason: 'Git branch request' };
+    if (/\b(what are we building|this repo|this repository|our current edith architecture|current edith architecture|edith architecture|architecture match|project)\b/.test(lower)) {
+      return { route: 'workspace:repo', reason: 'repository understanding request' };
+    }
     if (/\b(ask|have|tell|use|delegate to)\s+codex\b/.test(lower)) return { route: 'agent:codex', reason: 'explicit Codex request' };
     if (/\b(ask|have|tell|use|delegate to)\s+claude\b/.test(lower)) return { route: 'agent:claude', reason: 'explicit Claude request' };
     if (/\b(ask|have|tell|use|delegate to)\s+opencode\b/.test(lower) || /\bfix\b.*\btests?\b/.test(lower) || /\bmake the changes\b/.test(lower)) {
       return { route: 'agent:opencode', reason: 'coding-agent request' };
     }
-    if (/\b(web|internet|latest|current documentation|search)\b/.test(lower)) return { route: 'web', reason: 'current information request' };
-    if (/\b(git status|changed in git|what'?s changed|git diff|changed in this repository)\b/.test(lower)) return { route: 'workspace:git', reason: 'workspace Git request' };
-    if (/\b(what are we building|this repo|this repository|architecture|project)\b/.test(lower)) {
-      return { route: 'workspace:repo', reason: 'repository understanding request' };
+    if (/\b(current|latest|recent|release|version|documentation|docs|api|sdk|search the web|look up|check the current)\b/.test(lower)) {
+      return /\b(documentation|docs|api|sdk)\b/.test(lower)
+        ? { route: 'network:docs', reason: 'current documentation request' }
+        : { route: 'network:search', reason: 'current information request' };
     }
+    if (/\b(git status|changed in git|what'?s changed|git diff|changed in this repository)\b/.test(lower)) return { route: 'workspace:git', reason: 'workspace Git request' };
     if (/\b(directory|folder|working in|launched)\b/.test(lower)) return { route: 'workspace:cwd', reason: 'workspace location request' };
     if (/\b(model|provider|running)\b/.test(lower)) return { route: 'status:model', reason: 'model status request' };
     return { route: 'local', reason: 'general conversation' };
@@ -131,6 +138,9 @@ export class EdithAgentCore {
     if (plan.route === 'system:info') return this.answerSystemInfo(events);
     if (plan.route === 'status:agents') return this.answerAgentStatus(events);
     if (plan.route === 'status:web') return this.answerWebStatus(events);
+    if (plan.route === 'network:search') return this.answerNetworkSearch(userText, events);
+    if (plan.route === 'network:docs') return this.answerDocsLookup(userText, events);
+    if (plan.route === 'network:fetch') return this.answerUrlFetch(userText, events);
     if (plan.route === 'status:model') return this.answerModelStatus();
     if (plan.route === 'workspace:cwd') return this.answerWorkspaceStatus();
     if (plan.route === 'workspace:branch') return this.answerBranchStatus(events);
@@ -139,7 +149,6 @@ export class EdithAgentCore {
     if (plan.route === 'agent:codex') return this.delegate('codex', userText, events);
     if (plan.route === 'agent:claude') return this.delegate('claude', userText, events);
     if (plan.route === 'agent:opencode') return this.delegate('opencode', userText, events);
-    if (plan.route === 'web') return this.webRequired(events);
     return this.answerLocal(userText, '', events);
   }
 
@@ -205,8 +214,9 @@ export class EdithAgentCore {
     this.trace.push({ type: 'tool', tool: 'web_search', title: 'Checking web search backend' });
     const web = this.toolRegistry.get('web_search');
     const fetch = this.toolRegistry.get('web_fetch');
+    const docs = this.toolRegistry.get('docs_lookup');
     const text = web?.availability === 'AVAILABLE'
-      ? 'Web search is configured.'
+      ? `Web search is configured. web_search=${web.availability}, web_fetch=${fetch?.availability ?? 'UNKNOWN'}, docs_lookup=${docs?.availability ?? 'UNKNOWN'}.`
       : `Web search is not configured. web_search=${web?.availability ?? 'UNKNOWN'}, web_fetch=${fetch?.availability ?? 'UNKNOWN'}.`;
     return { text, route: 'status:web' };
   }
@@ -273,13 +283,69 @@ export class EdithAgentCore {
     }
   }
 
-  webRequired(events) {
-    events.activity?.('Checking web search backend');
-    this.trace.push({ type: 'tool', tool: 'web_search', title: 'Checking web search backend' });
-    return {
-      text: 'WEB SEARCH: BACKEND REQUIRED\n\nThe web_search and web_fetch tool interfaces exist, but no no-key or credentialed backend is configured in EDITH yet.',
-      route: 'web'
-    };
+  async answerNetworkSearch(userText, events) {
+    events.activity?.('Searching web');
+    this.trace.push({ type: 'tool', tool: 'web_search', title: 'Searching web' });
+    try {
+      const results = await this.network.search({ query: userText, maxResults: 4 });
+      if (!results.length) return { text: 'I could not find a configured authoritative source for that query.', route: 'network:search' };
+      const fetched = [];
+      for (const result of results.slice(0, 2)) {
+        events.activity?.(`Fetching ${new URL(result.url).hostname}`);
+        this.trace.push({ type: 'tool', tool: 'web_fetch', title: `Fetching ${result.url}` });
+        fetched.push({ result, page: await this.network.fetch({ url: result.url }) });
+      }
+      return this.synthesizeNetworkAnswer(userText, fetched, events, 'network:search');
+    } catch (error) {
+      return { text: `EDITH could not retrieve current information: ${humanNetworkError(error)}`, route: 'network:search', error };
+    }
+  }
+
+  async answerDocsLookup(userText, events) {
+    events.activity?.('Reading official documentation');
+    this.trace.push({ type: 'tool', tool: 'docs_lookup', title: 'Reading official documentation' });
+    try {
+      const docs = await this.network.lookupDocs({ query: userText, maxResults: 3 });
+      if (!docs.length) return { text: 'I could not find configured official documentation for that request.', route: 'network:docs' };
+      return this.synthesizeNetworkAnswer(userText, docs.map((doc) => ({ result: doc, page: doc.fetched })), events, 'network:docs');
+    } catch (error) {
+      return { text: `EDITH could not retrieve documentation: ${humanNetworkError(error)}`, route: 'network:docs', error };
+    }
+  }
+
+  async answerUrlFetch(userText, events) {
+    const url = extractUrl(userText);
+    events.activity?.(`Fetching ${new URL(url).hostname}`);
+    this.trace.push({ type: 'tool', tool: 'web_fetch', title: `Fetching ${url}` });
+    try {
+      const page = await this.network.fetch({ url });
+      return this.synthesizeNetworkAnswer(userText, [{ result: { title: page.title, url: page.finalUrl, source: 'direct-url' }, page }], events, 'network:fetch');
+    } catch (error) {
+      return { text: `EDITH could not fetch that URL: ${humanNetworkError(error)}`, route: 'network:fetch', error };
+    }
+  }
+
+  async synthesizeNetworkAnswer(userText, items, events, route) {
+    const context = items.map(({ result, page }, index) => [
+      `Source ${index + 1}: ${result.title}`,
+      `URL: ${result.url}`,
+      `Retrieved: ${page.retrievedAt}`,
+      page.text
+    ].join('\n')).join('\n\n').slice(0, MAX_TOOL_CONTEXT);
+    const sources = items.map(({ result }, index) => `${index + 1}. ${result.title} - ${result.url}`).join('\n');
+    const prompt = [
+      `User request: ${userText}`,
+      'Use only the retrieved external information below for current claims.',
+      'Do not invent citations. Keep the answer concise.',
+      '',
+      context,
+      '',
+      `Sources to cite:\n${sources}`
+    ].join('\n');
+    const answer = await this.answerLocal(prompt, context, events, { route, maxTokens: 1000 });
+    const text = `${answer.text}\n\nSources:\n${sources}`;
+    if (answer.streamed) events.streamChunk?.(`\n\nSources:\n${sources}`);
+    return { ...answer, text, route };
   }
 
   async liveAgentStatus() {
@@ -346,7 +412,8 @@ export class EdithAgentCore {
       `UNAVAILABLE tools: ${unavailableTools.join(', ') || 'none'}`,
       `Agents: ${agents.join('; ') || 'unknown'}`,
       `Providers: ${providers.join('; ') || 'unknown'}`,
-      'Workspace permissions: read/search/git status/git diff only; no native write or shell execution.'
+      'Workspace permissions: read/search/git status/git diff only; no native write or shell execution.',
+      'Network permissions: public HTTP/HTTPS fetch only; localhost/private network/file URLs blocked.'
     ].join('\n');
   }
 
@@ -370,4 +437,14 @@ function buildDelegationPrompt(userText, history) {
     .map((message) => `${message.role}${message.name ? `:${message.name}` : ''}: ${message.content}`)
     .join('\n\n');
   return `Current EDITH conversation context:\n${context}\n\nUser request to delegate:\n${userText}`;
+}
+
+function extractUrl(text) {
+  return text.match(/\b(?:https?|file):\/\/[^\s)]+/i)?.[0] ?? null;
+}
+
+function humanNetworkError(error) {
+  if (/fetch failed|ECONNRESET/i.test(error.message)) return 'the connection failed or was reset.';
+  if (/timed out/i.test(error.message)) return 'the request timed out.';
+  return error.message;
 }

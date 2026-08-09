@@ -28,4 +28,15 @@ describe('native agent routing', () => {
     assert.equal(core.route('Can you search the web?').route, 'status:web');
     assert.equal(core.route('What agents can you use right now?').route, 'status:agents');
   });
+
+  it('routes current external information and URLs to network tools', () => {
+    const core = new EdithAgentCore();
+
+    assert.equal(core.route('What is the latest stable version of OpenCode right now?').route, 'network:search');
+    assert.equal(core.route('Check the current OpenCode documentation for MCP servers.').route, 'network:docs');
+    assert.equal(core.route('Read this page: https://opencode.ai/docs/cli/').route, 'network:fetch');
+    assert.equal(core.route('Read this page: file:///etc/hosts').route, 'network:fetch');
+    assert.equal(core.route('Explain what an MCP server is.').route, 'local');
+    assert.equal(core.route('Does our current EDITH architecture match that?').route, 'workspace:repo');
+  });
 });

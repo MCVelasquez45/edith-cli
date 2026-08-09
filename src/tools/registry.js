@@ -40,8 +40,8 @@ export function createDefaultToolRegistry() {
     source: 'edith',
     inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
     risk: Risk.NETWORK,
-    permissions: ['backend-required'],
-    availability: 'NOT_CONFIGURED'
+    permissions: ['network', 'public-web-only'],
+    availability: 'AVAILABLE'
   });
   registry.register({
     id: 'web_fetch',
@@ -50,18 +50,18 @@ export function createDefaultToolRegistry() {
     source: 'edith',
     inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
     risk: Risk.NETWORK,
-    permissions: ['backend-required'],
-    availability: 'NOT_CONFIGURED'
+    permissions: ['network', 'public-web-only'],
+    availability: 'AVAILABLE'
   });
   registry.register({
-    id: 'documentation_lookup',
-    name: 'documentation_lookup',
+    id: 'docs_lookup',
+    name: 'docs_lookup',
     description: 'Retrieve current technical documentation through a configured docs/search backend.',
     source: 'edith',
     inputSchema: { type: 'object', properties: { topic: { type: 'string' } }, required: ['topic'] },
     risk: Risk.NETWORK,
-    permissions: ['backend-required'],
-    availability: 'NOT_CONFIGURED'
+    permissions: ['network', 'official-source-preferred'],
+    availability: 'AVAILABLE'
   });
   return registry;
 }
