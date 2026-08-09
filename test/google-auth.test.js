@@ -70,7 +70,7 @@ describe('google oauth foundation', () => {
         });
       }
     });
-    await store.set('google:tokens', {
+    await store.set('google:personal:tokens', {
       access_token: 'access-old',
       refresh_token: 'refresh-token',
       token_type: 'Bearer',
@@ -89,9 +89,30 @@ describe('google oauth foundation', () => {
     assert.equal(status.account, 'user@example.com');
     assert.equal(status.token, 'Valid');
     assert.equal(status.refresh, 'Available');
-    const stored = await store.get('google:tokens');
+    const stored = await store.get('google:personal:tokens');
     assert.equal(stored.access_token, 'access-new');
     assert.equal(stored.refresh_token, 'refresh-token');
+  });
+
+  it('isolates token storage by Google profile', async () => {
+    const personal = new GoogleWorkspaceAuthProvider({
+      profile: 'personal',
+      tokenStore: new MemoryTokenStore(),
+      metadataFile: await tempFile(),
+      clientConfig: { client_id: 'client-id' },
+      fetchImpl: async () => jsonResponse({})
+    });
+    const work = new GoogleWorkspaceAuthProvider({
+      profile: 'work',
+      tokenStore: new MemoryTokenStore(),
+      metadataFile: await tempFile(),
+      clientConfig: { client_id: 'client-id' },
+      fetchImpl: async () => jsonResponse({})
+    });
+
+    assert.equal(personal.keychainAccount, 'google:personal:tokens');
+    assert.equal(work.keychainAccount, 'google:work:tokens');
+    assert.notEqual(personal.metadataFile, work.metadataFile);
   });
 
   it('normalizes admin-blocked and revoked-token failures safely', () => {

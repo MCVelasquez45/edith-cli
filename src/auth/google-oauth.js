@@ -12,28 +12,29 @@ const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
 const DEFAULT_CLIENT_FILE = path.join(EDITH_CONFIG_DIR, 'google-oauth-client.json');
-const METADATA_FILE = path.join(EDITH_CONFIG_DIR, 'auth-google.json');
-const KEYCHAIN_ACCOUNT = 'google:tokens';
 
 export class GoogleWorkspaceAuthProvider {
-  constructor({ tokenStore = new KeychainTokenStore(), fetchImpl = fetch, clientConfig = null, openBrowser = openDefaultBrowser, metadataFile = METADATA_FILE } = {}) {
+  constructor({ profile = 'personal', tokenStore = new KeychainTokenStore(), fetchImpl = fetch, clientConfig = null, openBrowser = openDefaultBrowser, metadataFile = null } = {}) {
     this.id = 'google';
     this.name = 'Google Workspace';
+    this.profile = profile;
     this.tokenStore = tokenStore;
     this.fetch = fetchImpl;
     this.clientConfigOverride = clientConfig;
     this.openBrowser = openBrowser;
-    this.metadataFile = metadataFile;
+    this.metadataFile = metadataFile ?? path.join(EDITH_CONFIG_DIR, `auth-google-${profile}.json`);
+    this.keychainAccount = `google:${profile}:tokens`;
   }
 
   async status() {
     const client = await this.loadClientConfig().catch(() => null);
     const metadata = await readJson(this.metadataFile).catch(() => null);
-    if (!client) return notConfiguredStatus();
-    const tokens = await this.tokenStore.get(KEYCHAIN_ACCOUNT);
+    if (!client) return notConfiguredStatus(this.profile);
+    const tokens = await this.tokenStore.get(this.keychainAccount);
     if (!tokens || !metadata?.account) {
       return {
         provider: this.id,
+        profile: this.profile,
         name: this.name,
         status: AuthState.DISCONNECTED,
         account: null,
@@ -50,6 +51,7 @@ export class GoogleWorkspaceAuthProvider {
       const normalized = normalizeGoogleAuthError(refreshed.error, this.adminContext(client));
       return {
         provider: this.id,
+        profile: this.profile,
         name: this.name,
         status: normalized.status,
         account: metadata.account,
@@ -64,6 +66,7 @@ export class GoogleWorkspaceAuthProvider {
     }
     return {
       provider: this.id,
+      profile: this.profile,
       name: this.name,
       status: AuthState.CONNECTED,
       account: metadata.account,
@@ -116,9 +119,10 @@ export class GoogleWorkspaceAuthProvider {
     const tokens = await this.exchangeCode({ client, code: callbackResult.code, redirectUri, codeVerifier });
     const account = await this.fetchIdentity(tokens.access_token);
     const stored = normalizeTokens(tokens);
-    await this.tokenStore.set(KEYCHAIN_ACCOUNT, stored);
+    await this.tokenStore.set(this.keychainAccount, stored);
     await writeJson(this.metadataFile, {
       provider: this.id,
+      profile: this.profile,
       account: account.email,
       subject: account.sub,
       scopes: parseScopes(tokens.scope || scopes.join(' ')),
@@ -162,7 +166,7 @@ export class GoogleWorkspaceAuthProvider {
 
   async refresh({ tokens = null, client = null } = {}) {
     const resolvedClient = client ?? await this.loadClientConfig();
-    const current = tokens ?? await this.tokenStore.get(KEYCHAIN_ACCOUNT);
+    const current = tokens ?? await this.tokenStore.get(this.keychainAccount);
     if (!current?.refresh_token) throw new AuthError('No Google refresh token is available.', { code: 'missing_refresh_token', status: AuthState.DISCONNECTED });
     const body = new URLSearchParams({
       client_id: resolvedClient.clientId,
@@ -178,8 +182,20 @@ export class GoogleWorkspaceAuthProvider {
     const json = await safeJson(response);
     if (!response.ok) throw normalizeGoogleAuthError(new AuthError(json.error_description || json.error || 'Token refresh failed.', { code: json.error, details: json }), this.adminContext(resolvedClient));
     const next = normalizeTokens({ ...current, ...json, refresh_token: json.refresh_token ?? current.refresh_token });
-    await this.tokenStore.set(KEYCHAIN_ACCOUNT, next);
+    await this.tokenStore.set(this.keychainAccount, next);
     return next;
+  }
+
+  async accessToken({ requiredScopes = [] } = {}) {
+    const client = await this.loadClientConfig();
+    const metadata = await readJson(this.metadataFile);
+    for (const scope of requiredScopes) {
+      if (!metadata.scopes?.includes(scope)) throw new AuthError(`Google profile ${this.profile} lacks required scope: ${scope}`, { code: 'missing_scope', status: AuthState.DISCONNECTED });
+    }
+    const tokens = await this.tokenStore.get(this.keychainAccount);
+    if (!tokens) throw new AuthError(`Google profile ${this.profile} is not authenticated.`, { code: 'not_authenticated', status: AuthState.DISCONNECTED });
+    const fresh = await this.ensureFreshToken({ tokens, client, metadata });
+    return { accessToken: fresh.tokens.access_token, account: metadata.account, profile: this.profile, scopes: metadata.scopes ?? [] };
   }
 
   async ensureFreshToken({ tokens, client, metadata }) {
@@ -190,7 +206,7 @@ export class GoogleWorkspaceAuthProvider {
   }
 
   async logout() {
-    await this.tokenStore.delete(KEYCHAIN_ACCOUNT);
+    await this.tokenStore.delete(this.keychainAccount);
     await fs.rm(this.metadataFile, { force: true });
     return { provider: this.id, status: AuthState.DISCONNECTED };
   }
@@ -203,7 +219,10 @@ export class GoogleWorkspaceAuthProvider {
         client_secret: process.env.EDITH_GOOGLE_CLIENT_SECRET
       });
     }
-    const file = process.env.EDITH_GOOGLE_OAUTH_CLIENT_FILE ?? DEFAULT_CLIENT_FILE;
+    const profileFile = path.join(EDITH_CONFIG_DIR, `google-oauth-client-${this.profile}.json`);
+    const file = process.env[`EDITH_GOOGLE_OAUTH_CLIENT_FILE_${this.profile.toUpperCase()}`]
+      ?? process.env.EDITH_GOOGLE_OAUTH_CLIENT_FILE
+      ?? (await exists(profileFile) ? profileFile : DEFAULT_CLIENT_FILE);
     const raw = JSON.parse(await fs.readFile(file, 'utf8'));
     return normalizeClientConfig(raw);
   }
@@ -354,9 +373,10 @@ async function writeJson(file, value) {
   await fs.writeFile(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
-function notConfiguredStatus() {
+function notConfiguredStatus(profile = 'personal') {
   return {
     provider: 'google',
+    profile,
     name: 'Google Workspace',
     status: AuthState.NOT_CONFIGURED,
     account: null,
@@ -371,4 +391,8 @@ function notConfiguredStatus() {
       'or set EDITH_GOOGLE_CLIENT_ID and EDITH_GOOGLE_CLIENT_SECRET outside the repository.'
     ].join(' ')
   };
+}
+
+async function exists(file) {
+  return fs.access(file).then(() => true, () => false);
 }

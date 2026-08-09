@@ -33,6 +33,7 @@ export class EdithAgentCore {
     this.contextStatusRows = [];
     this.authRegistry = new AuthRegistry();
     this.authStatusRows = [];
+    this.lastPersonalContextItems = [];
   }
 
   async initialize({ modelArg = null } = {}) {
@@ -128,6 +129,9 @@ export class EdithAgentCore {
       return { route: 'context:end-of-day', reason: 'end-of-day read-only review request' };
     }
     if (/\bwhat'?s next\b|\bnext (meeting|event|up)\b/.test(lower)) return { route: 'context:next-event', reason: 'next personal-context item request' };
+    if (/\bwhat calendars\b|\bwhich calendars\b|\bcalendars can you see\b/.test(lower)) return { route: 'context:calendars', reason: 'calendar discovery request' };
+    if (/\bwhich calendar\b|\bwhere did you get\b.*\b(meeting|event|that)\b/.test(lower)) return { route: 'context:provenance', reason: 'personal context provenance request' };
+    if (/\btomorrow\b.*\b(calendar|look like|events?|meetings?)\b|\bwhat does tomorrow look like\b/.test(lower)) return { route: 'context:events-tomorrow', reason: 'calendar tomorrow request' };
     if (/\b(meetings?|events?)\b.*\b(left|remaining|today|tomorrow|afternoon)\b|\bwhat do i have (left|going on)\b/.test(lower)) {
       return { route: 'context:events', reason: 'calendar context request' };
     }
@@ -180,6 +184,9 @@ export class EdithAgentCore {
     if (plan.route === 'context:brief-updated') return this.answerBrief({ updated: true, events });
     if (plan.route === 'context:end-of-day') return this.answerEndOfDay(events);
     if (plan.route === 'context:next-event') return this.answerNextEvent(events);
+    if (plan.route === 'context:calendars') return this.answerCalendars(events);
+    if (plan.route === 'context:provenance') return this.answerContextProvenance(events);
+    if (plan.route === 'context:events-tomorrow') return this.answerEventsTomorrow(events);
     if (plan.route === 'context:events') return this.answerEventsToday(events);
     if (plan.route === 'context:email') return this.answerUnreadEmail(events);
     if (plan.route === 'context:development') return this.answerDevelopmentContext(events);
@@ -306,15 +313,51 @@ export class EdithAgentCore {
     events.activity?.('Checking next calendar event');
     this.trace.push({ type: 'tool', tool: 'context_next_event', title: 'Checking next calendar event' });
     const next = await this.contextEngine.getNextEvent();
-    if (!next) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Calendar') || 'I do not see an upcoming calendar event from configured read-only sources.', route: 'context:next-event' };
+    if (!next) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Google Calendar') || 'I do not see an upcoming calendar event from configured read-only sources.', route: 'context:next-event' };
+    this.lastPersonalContextItems = [next];
     return { text: `Next up: ${next.title} at ${formatDateTime(next.startAt)}. Source: ${sourceLabel(next)}.`, route: 'context:next-event' };
+  }
+
+  async answerCalendars(events) {
+    events.activity?.('Checking Google Calendar list');
+    this.trace.push({ type: 'tool', tool: 'context_events', title: 'Checking Google Calendar list' });
+    const connector = this.contextRegistry.connectors.find((item) => item.sourceType === 'calendar' && item.getCalendars);
+    const status = await this.contextRegistry.status();
+    const row = status.find((item) => item.id === connector?.id);
+    if (!connector || row?.health !== ConnectorHealth.CONNECTED) return { text: sourceUnavailableText(status, 'Google Calendar') || 'No connected calendar source is available.', route: 'context:calendars' };
+    const calendars = (await connector.getCalendars()).items;
+    const text = calendars.map((calendar) => `${calendar.primary ? '* ' : '- '}${calendar.title} (${calendar.accessRole}; timezone: ${calendar.timezone || 'unknown'}; source: google-calendar / ${calendar.sourceAccount})`).join('\n');
+    return { text: text || 'Google Calendar returned no calendars.', route: 'context:calendars' };
+  }
+
+  answerContextProvenance(events) {
+    events.activity?.('Checking last personal-context source');
+    this.trace.push({ type: 'tool', tool: 'context_status', title: 'Checking last personal-context source' });
+    const item = this.lastPersonalContextItems[0];
+    if (!item) return { text: 'I do not have a prior calendar/email/task item in this session to trace yet.', route: 'context:provenance' };
+    return { text: `That came from ${sourceLabel(item)}.${item.metadata?.calendarId ? ` Calendar ID: ${item.metadata.calendarId}.` : ''}`, route: 'context:provenance' };
+  }
+
+  async answerEventsTomorrow(events) {
+    events.activity?.('Checking tomorrow calendar events');
+    this.trace.push({ type: 'tool', tool: 'context_events', title: 'Checking tomorrow calendar events' });
+    const start = startOfLocalTomorrow();
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    const connector = this.contextRegistry.connectors.find((item) => item.sourceType === 'calendar' && item.getEventsBetween);
+    const status = await this.contextRegistry.status();
+    const row = status.find((item) => item.id === connector?.id);
+    if (!connector || row?.health !== ConnectorHealth.CONNECTED) return { text: sourceUnavailableText(status, 'Google Calendar') || 'No connected calendar source is available.', route: 'context:events-tomorrow' };
+    const items = await connector.getEventsBetween({ start, end, limit: 20 });
+    this.lastPersonalContextItems = items;
+    return { text: items.length ? items.map((event) => `${formatDateTime(event.startAt)} - ${event.title} (${sourceLabel(event)})`).join('\n') : 'No calendar events were returned for tomorrow.', route: 'context:events-tomorrow' };
   }
 
   async answerEventsToday(events) {
     events.activity?.('Checking calendar events');
     this.trace.push({ type: 'tool', tool: 'context_events', title: 'Checking calendar events' });
     const remaining = await this.contextEngine.getEventsAfter();
-    if (!remaining.length) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Calendar') || 'No remaining calendar events were returned by configured read-only sources.', route: 'context:events' };
+    if (!remaining.length) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Google Calendar') || 'No remaining calendar events were returned by configured read-only sources.', route: 'context:events' };
+    this.lastPersonalContextItems = remaining;
     return { text: remaining.map((event) => `${formatDateTime(event.startAt)} - ${event.title} (${sourceLabel(event)})`).join('\n'), route: 'context:events' };
   }
 
@@ -576,6 +619,11 @@ function formatDateTime(value) {
     month: 'short',
     day: 'numeric'
   }).format(new Date(value));
+}
+
+function startOfLocalTomorrow() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
 }
 
 function parseModelArg(value) {

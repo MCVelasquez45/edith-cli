@@ -57,7 +57,8 @@ Usage:
   edith models          List live local model inventory
   edith providers       List local provider health
   edith agents          List available coding agents
-  edith auth google     Connect Google Workspace with local OAuth
+  edith auth google --profile personal --scope calendar
+                         Connect Google Workspace with local OAuth
   edith auth status     Show authentication status
   edith context status  Show read-only personal context connector status
   edith ask local       Ask the default local model
@@ -132,8 +133,9 @@ async function printAgents() {
 
 async function runAuth(args, ui) {
   const sub = args[0] ?? 'status';
+  const options = parseAuthOptions(args.slice(1));
   const registry = new AuthRegistry();
-  const google = registry.get('google');
+  const google = registry.get('google', options.profile);
   const audit = new AuditLog();
   if (sub === 'status') return printAuthStatus(await registry.status());
   if (sub === 'google') {
@@ -146,8 +148,8 @@ async function runAuth(args, ui) {
       return;
     }
     try {
-      await audit.record({ type: 'google_auth_started', provider: 'google', scopes: ['identity'] });
-      const result = await google.authenticate({ ui });
+      await audit.record({ type: 'google_auth_started', provider: 'google', profile: options.profile, scopes: options.scopeKeys });
+      const result = await google.authenticate({ ui, scopeKeys: options.scopeKeys });
       await audit.record({ type: 'google_auth_completed', provider: 'google', account: result.account, scopes: result.scopes });
       console.log('Google Workspace connected successfully.');
       return printAuthStatus([result]);
@@ -158,7 +160,7 @@ async function runAuth(args, ui) {
         console.log('');
         console.log('GOOGLE AUTH: ADMIN APPROVAL REQUIRED');
         console.log('');
-        const provider = registry.get('google');
+        const provider = registry.get('google', options.profile);
         const client = await provider.loadClientConfig().catch(() => null);
         if (client) console.log(provider.adminApprovalRequest(client));
       }
@@ -177,6 +179,7 @@ async function runAuth(args, ui) {
 function printAuthStatus(rows) {
   for (const row of rows) {
     console.log(row.name.toUpperCase());
+    console.log(`Profile: ${row.profile ?? 'default'}`);
     console.log(`Status: ${row.status}`);
     console.log(`Account: ${row.account ?? '(none)'}`);
     console.log(`Access: ${row.status === 'CONNECTED' ? 'Read-only foundation' : '(none)'}`);
@@ -190,6 +193,25 @@ function printAuthStatus(rows) {
   }
 }
 
+function parseAuthOptions(args) {
+  const options = { profile: 'personal', scopeKeys: ['identity'] };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--profile') {
+      options.profile = args[index + 1] ?? options.profile;
+      index += 1;
+      continue;
+    }
+    if (arg === '--scope') {
+      const value = args[index + 1];
+      if (value === 'calendar') options.scopeKeys = ['identity', 'calendar'];
+      if (value === 'identity') options.scopeKeys = ['identity'];
+      index += 1;
+    }
+  }
+  return options;
+}
+
 function googleSetupInstructions() {
   return [
     'Google OAuth setup required:',
@@ -198,9 +220,9 @@ function googleSetupInstructions() {
     '3. Create an OAuth client of type Desktop application.',
     '4. Download the client JSON and store it outside Git at ~/.config/edith/google-oauth-client.json,',
     '   or set EDITH_GOOGLE_CLIENT_ID and EDITH_GOOGLE_CLIENT_SECRET in your local environment.',
-    '5. Run edith auth google again.',
+    '5. Run edith auth google --profile personal --scope calendar again.',
     '',
-    'EDITH will request only: openid email profile.',
+    'For the Calendar POC, EDITH will request: openid email profile and Google Calendar read-only.',
     'Redirect: http://127.0.0.1:<random-port>/oauth/google/callback.',
     'Tokens will be stored in macOS Keychain; non-secret metadata is stored under ~/.config/edith.'
   ].join('\n');

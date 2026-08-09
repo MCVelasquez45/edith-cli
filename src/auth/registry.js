@@ -1,12 +1,14 @@
 import { GoogleWorkspaceAuthProvider } from './google-oauth.js';
 
 export class AuthRegistry {
-  constructor({ providers = [new GoogleWorkspaceAuthProvider()] } = {}) {
-    this.providers = providers;
+  constructor({ profiles = ['personal', 'work'], providers = null } = {}) {
+    this.profiles = profiles;
+    this.providers = providers ?? profiles.map((profile) => new GoogleWorkspaceAuthProvider({ profile }));
   }
 
-  get(id) {
-    return this.providers.find((provider) => provider.id === id);
+  get(id, profile = 'personal') {
+    return this.providers.find((provider) => provider.id === id && provider.profile === profile)
+      ?? this.providers.find((provider) => provider.id === id);
   }
 
   async status() {

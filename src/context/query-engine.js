@@ -11,10 +11,27 @@ export class ContextQueryEngine {
   }
 
   async getEventsToday() {
-    return [];
+    const rows = await this.registry.status();
+    const results = [];
+    for (const connector of this.registry.connectors.filter((item) => item.sourceType === 'calendar')) {
+      const row = rows.find((item) => item.id === connector.id);
+      if (row?.health === ConnectorHealth.CONNECTED && connector.getEventsToday) {
+        results.push(...await connector.getEventsToday({ timezone: this.systemTools.localTimezone(), limit: 20 }));
+      }
+    }
+    return limitItems(results.sort((a, b) => new Date(a.startAt ?? 0) - new Date(b.startAt ?? 0)), 20);
   }
 
   async getEventsAfter(now = new Date()) {
+    const rows = await this.registry.status();
+    const results = [];
+    for (const connector of this.registry.connectors.filter((item) => item.sourceType === 'calendar')) {
+      const row = rows.find((item) => item.id === connector.id);
+      if (row?.health === ConnectorHealth.CONNECTED && connector.getEventsAfter) {
+        results.push(...await connector.getEventsAfter(now, { limit: 20 }));
+      }
+    }
+    if (results.length) return limitItems(results.sort((a, b) => new Date(a.startAt ?? 0) - new Date(b.startAt ?? 0)), 20);
     const events = await this.getEventsToday();
     return events.filter((event) => event.startAt && new Date(event.startAt) > now);
   }

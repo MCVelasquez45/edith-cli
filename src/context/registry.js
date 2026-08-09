@@ -1,18 +1,14 @@
 import { NotConfiguredConnector } from './connectors/base.js';
 import { GitHubConnector } from './connectors/github.js';
 import { GitLabConnector } from './connectors/gitlab.js';
+import { GoogleCalendarConnector } from './connectors/google-calendar.js';
 import { ConnectorHealth } from './models.js';
 
 export class ContextConnectorRegistry {
   constructor({ cwd = process.cwd(), connectors = null } = {}) {
     this.cwd = cwd;
     this.connectors = connectors ?? [
-      new NotConfiguredConnector({
-        id: 'calendar',
-        name: 'Calendar',
-        sourceType: 'calendar',
-        capabilities: ['events.read']
-      }),
+      new GoogleCalendarConnector({ profile: 'personal' }),
       new NotConfiguredConnector({
         id: 'email',
         name: 'Email',
@@ -32,7 +28,8 @@ export class ContextConnectorRegistry {
   }
 
   get(id) {
-    return this.connectors.find((connector) => connector.id === id);
+    return this.connectors.find((connector) => connector.id === id)
+      ?? this.connectors.find((connector) => connector.sourceType === id);
   }
 
   async status({ refresh = false } = {}) {
