@@ -12,6 +12,8 @@ Launches the native EDITH conversational TUI.
 
 Normal conversation is typed directly into the composer. EDITH starts in a compact cockpit showing workspace, model, runtime, tool count, agent availability, and routing mode.
 
+Multiline paste is atomic when the terminal supports bracketed paste: EDITH waits for the paste end marker before routing or generating. Blank lines, lists, code blocks, and Unicode are preserved. A trailing `\\` on a typed line keeps the existing continuation behavior. Pasted blocks that begin with `/` are treated as user content when they contain newlines; slash commands execute only as an explicitly submitted single-line command.
+
 The routing control shows:
 
 ```text

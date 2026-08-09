@@ -1,7 +1,7 @@
 import process from 'node:process';
-import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { EdithAgentCore } from './agent-core.js';
+import { AtomicInputComposer } from './input-composer.js';
 import { NativeTurnRenderer, createTurnEvents } from './progress-renderer.js';
 import {
   RoutingMode,
@@ -29,58 +29,56 @@ export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
   };
   printNativeCockpit(core, ui, session);
 
-  const rl = createInterface({
-    input,
-    output,
-    terminal: Boolean(input.isTTY && output.isTTY),
-    historySize: 200,
-    removeHistoryDuplicates: true
-  });
+  const composer = new AtomicInputComposer({ input, output });
+  composer.start();
 
   let multiline = [];
   let activeTurn = null;
-  rl.on('SIGINT', () => {
+  composer.on('cancel', () => {
     if (activeTurn) {
       activeTurn.abort();
       return;
     }
-    ui.line('');
-    ui.warn('Cancelled. Type /exit to quit.');
-    multiline = [];
-    rl.prompt();
+    composer.cancelInput();
   });
 
   try {
     while (true) {
       ui.line(renderStatusLine(cockpitViewModel(core, session), { width: ui.stdout?.columns ?? process.stdout.columns ?? 100 }));
       const prompt = multiline.length ? colors.green('... ') : colors.green('\n> ');
-      let line;
-      try {
-        line = await rl.question(prompt);
-      } catch {
-        break;
+      composer.prompt(prompt);
+      const entry = await composer.read();
+      if (entry.type === 'eof') break;
+      if (entry.type === 'cancel') {
+        ui.line('');
+        ui.warn('Cancelled. Type /exit to quit.');
+        multiline = [];
+        continue;
       }
-      if (line.endsWith('\\')) {
+      const line = entry.text;
+      if (!entry.pasted && !line.includes('\n') && line.endsWith('\\')) {
         multiline.push(line.slice(0, -1));
         continue;
       }
       const inputText = [...multiline, line].join('\n').trim();
       multiline = [];
       if (!inputText) continue;
-      if (inputText.startsWith('/')) {
+      if (!inputText.includes('\n') && inputText.startsWith('/')) {
         const shouldExit = await handleSlashCommand(inputText, core, ui, cwd, session);
         if (shouldExit) break;
         continue;
       }
+      composer.setPaused(true);
       activeTurn = createActiveTurn();
       try {
         await runConversationTurn(core, inputText, ui, { session, signal: activeTurn.signal });
       } finally {
         activeTurn = null;
+        composer.setPaused(false);
       }
     }
   } finally {
-    rl.close();
+    composer.stop();
     process.stdout.write(colors.reset);
   }
 }

@@ -20,6 +20,16 @@ describe('native agent routing', () => {
     assert.equal(core.route('Can you send email?').route, 'status:permissions');
   });
 
+  it('keeps one finalized user turn paired with one assistant history entry', async () => {
+    const core = new EdithAgentCore();
+    await core.handleUserMessage('ready');
+
+    assert.deepEqual(core.history, [
+      { role: 'user', content: 'ready' },
+      { role: 'assistant', content: 'Ready. What are we working on?' }
+    ]);
+  });
+
   it('reports live tool and write capabilities without using stale read-only claims', () => {
     const core = new EdithAgentCore();
     core.contextStatusRows = [{
