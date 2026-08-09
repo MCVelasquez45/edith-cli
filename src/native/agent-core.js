@@ -9,6 +9,8 @@ import { ContextConnectorRegistry } from '../context/registry.js';
 import { ContextQueryEngine } from '../context/query-engine.js';
 import { BriefingEngine } from '../context/briefing.js';
 import { ConnectorHealth, sourceLabel } from '../context/models.js';
+import { AuthRegistry } from '../auth/registry.js';
+import { AuthState } from '../auth/errors.js';
 
 const MAX_MESSAGES = 24;
 const MAX_TOOL_CONTEXT = 18000;
@@ -29,6 +31,8 @@ export class EdithAgentCore {
     this.contextEngine = new ContextQueryEngine({ registry: this.contextRegistry, systemTools: this.systemTools });
     this.briefingEngine = new BriefingEngine({ queryEngine: this.contextEngine, systemTools: this.systemTools });
     this.contextStatusRows = [];
+    this.authRegistry = new AuthRegistry();
+    this.authStatusRows = [];
   }
 
   async initialize({ modelArg = null } = {}) {
@@ -38,6 +42,7 @@ export class EdithAgentCore {
     this.router = await createProviderRouter({ ui: this.ui });
     this.agentHealth = await this.agentRegistry.list();
     this.contextStatusRows = await this.contextRegistry.status({ refresh: true });
+    this.authStatusRows = await this.authRegistry.status();
     const configured = parseModelArg(modelArg) ?? {
       providerId: this.config.defaults.defaultAssistantProvider,
       modelId: this.config.defaults.defaultAssistantModel
@@ -528,8 +533,15 @@ export class EdithAgentCore {
     return [
       `Personal context AVAILABLE: ${available.join(', ') || 'none'}`,
       `Personal context UNAVAILABLE: ${unavailable.join(', ') || 'none'}`,
-      'Personal context permissions: read-only; email/calendar/task/GitHub/GitLab mutations unavailable; keep personal context local unless explicitly approved.'
+      'Personal context permissions: read-only; email/calendar/task/GitHub/GitLab mutations unavailable; keep personal context local unless explicitly approved.',
+      this.authCapabilityManifest()
     ].join('\n');
+  }
+
+  authCapabilityManifest() {
+    const google = this.authStatusRows.find((row) => row.provider === 'google');
+    if (!google || google.status !== AuthState.CONNECTED) return 'Google Workspace: unavailable';
+    return `Google Workspace identity: available (${google.account}); Calendar/Gmail/Drive/Tasks/Contacts: unavailable until read-only scopes and connectors are added.`;
   }
 
   pruneHistory() {

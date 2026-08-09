@@ -2,3 +2,6 @@ node_modules/
 .DS_Store
 .edith/
 npm-debug.log*
+google-oauth-client.json
+client_secret*.json
+*-oauth-client.json

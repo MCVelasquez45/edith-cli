@@ -26,7 +26,9 @@ export function redact(value) {
     return item
       .replace(/github_pat_[A-Za-z0-9_]+/g, '<REDACTED>')
       .replace(/gh[opsu]_[A-Za-z0-9_]+/g, '<REDACTED>')
+      .replace(/1\/\/[A-Za-z0-9._~+/=-]+/g, '<REDACTED>')
+      .replace(/ya29\.[A-Za-z0-9._~+/=-]+/g, '<REDACTED>')
       .replace(/sk-[A-Za-z0-9_-]+/g, '<REDACTED>')
-      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer <REDACTED>');
+      .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer <REDACTED>');
   }));
 }

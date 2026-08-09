@@ -12,6 +12,9 @@ import { serveEdithMcpStdio } from './mcp/server.js';
 import { createDefaultToolRegistry } from './tools/registry.js';
 import { runNativeEdith } from './native/interactive-cli.js';
 import { ContextConnectorRegistry } from './context/registry.js';
+import { AuthRegistry } from './auth/registry.js';
+import { AuthState } from './auth/errors.js';
+import { AuditLog } from './audit.js';
 
 const VERSION = '0.1.0';
 const DEFAULT_CODE_MODEL = process.env.EDITH_CODE_MODEL ?? 'lmstudio-local/qwen/qwen3-vl-4b';
@@ -30,6 +33,7 @@ export async function main(args) {
   if (command === 'chat') return runChat(args.slice(1), cwd, ui);
   if (command === 'ask') return runAsk(args.slice(1), cwd, ui);
   if (command === 'agents') return printAgents();
+  if (command === 'auth') return runAuth(args.slice(1), ui);
   if (command === 'context') return runContext(args.slice(1), cwd);
   if (command === 'mcp') return runMcp(args.slice(1), ui);
   if (command === 'tools') return runTools(args.slice(1));
@@ -53,6 +57,8 @@ Usage:
   edith models          List live local model inventory
   edith providers       List local provider health
   edith agents          List available coding agents
+  edith auth google     Connect Google Workspace with local OAuth
+  edith auth status     Show authentication status
   edith context status  Show read-only personal context connector status
   edith ask local       Ask the default local model
   edith ask claude      Delegate a prompt to Claude Code
@@ -122,6 +128,82 @@ async function printAgents() {
     console.log(`  capabilities: ${agent.capabilities.join(', ')}`);
     console.log(`  detail: ${agent.detail}`);
   }
+}
+
+async function runAuth(args, ui) {
+  const sub = args[0] ?? 'status';
+  const registry = new AuthRegistry();
+  const google = registry.get('google');
+  const audit = new AuditLog();
+  if (sub === 'status') return printAuthStatus(await registry.status());
+  if (sub === 'google') {
+    const status = await google.status();
+    if (status.status === AuthState.NOT_CONFIGURED) {
+      await audit.record({ type: 'google_auth_failed', provider: 'google', reason: 'not_configured' });
+      printAuthStatus([status]);
+      console.log('');
+      console.log(googleSetupInstructions());
+      return;
+    }
+    try {
+      await audit.record({ type: 'google_auth_started', provider: 'google', scopes: ['identity'] });
+      const result = await google.authenticate({ ui });
+      await audit.record({ type: 'google_auth_completed', provider: 'google', account: result.account, scopes: result.scopes });
+      console.log('Google Workspace connected successfully.');
+      return printAuthStatus([result]);
+    } catch (error) {
+      await audit.record({ type: 'google_auth_failed', provider: 'google', status: error.status, code: error.code });
+      console.log(`Google Workspace authorization failed: ${error.message}`);
+      if (error.status === AuthState.ADMIN_APPROVAL_REQUIRED) {
+        console.log('');
+        console.log('GOOGLE AUTH: ADMIN APPROVAL REQUIRED');
+        console.log('');
+        const provider = registry.get('google');
+        const client = await provider.loadClientConfig().catch(() => null);
+        if (client) console.log(provider.adminApprovalRequest(client));
+      }
+      return;
+    }
+  }
+  if (sub === 'logout' && args[1] === 'google') {
+    await google.logout();
+    await audit.record({ type: 'google_auth_revoked', provider: 'google' });
+    console.log('Google Workspace local tokens removed from EDITH.');
+    return;
+  }
+  throw new Error(`Unknown auth command: ${sub}`);
+}
+
+function printAuthStatus(rows) {
+  for (const row of rows) {
+    console.log(row.name.toUpperCase());
+    console.log(`Status: ${row.status}`);
+    console.log(`Account: ${row.account ?? '(none)'}`);
+    console.log(`Access: ${row.status === 'CONNECTED' ? 'Read-only foundation' : '(none)'}`);
+    console.log('Scopes:');
+    const scopes = row.approvedScopes?.length ? row.approvedScopes : row.scopes;
+    for (const scope of scopes.length ? scopes : ['(none)']) console.log(`  - ${scope}`);
+    console.log(`Token: ${row.token}`);
+    console.log(`Refresh: ${row.refresh}`);
+    console.log(`Token storage: ${row.storage}`);
+    console.log(`Detail: ${row.detail}`);
+  }
+}
+
+function googleSetupInstructions() {
+  return [
+    'Google OAuth setup required:',
+    '1. In Google Cloud Console, create or select a project.',
+    '2. Configure the OAuth consent screen for the intended Workspace audience.',
+    '3. Create an OAuth client of type Desktop application.',
+    '4. Download the client JSON and store it outside Git at ~/.config/edith/google-oauth-client.json,',
+    '   or set EDITH_GOOGLE_CLIENT_ID and EDITH_GOOGLE_CLIENT_SECRET in your local environment.',
+    '5. Run edith auth google again.',
+    '',
+    'EDITH will request only: openid email profile.',
+    'Redirect: http://127.0.0.1:<random-port>/oauth/google/callback.',
+    'Tokens will be stored in macOS Keychain; non-secret metadata is stored under ~/.config/edith.'
+  ].join('\n');
 }
 
 async function runContext(args, cwd) {

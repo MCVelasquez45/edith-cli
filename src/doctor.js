@@ -6,6 +6,7 @@ import { EdithMcpClient } from './mcp/client.js';
 import { McpRegistry } from './mcp/registry.js';
 import { createDefaultToolRegistry } from './tools/registry.js';
 import { ContextConnectorRegistry } from './context/registry.js';
+import { AuthRegistry } from './auth/registry.js';
 
 export async function runDoctor({ cwd, ui }) {
   ui.section('EDITH Doctor');
@@ -58,6 +59,11 @@ export async function runDoctor({ cwd, ui }) {
   }
   const mutationTools = tools.filter((tool) => /sendEmail|deleteEmail|createEvent|updateEvent|deleteEvent|createTask|updateTask|mergePR|mergeMR|createIssue/i.test(tool.id));
   ui.line(`${mutationTools.length ? 'FAIL' : 'OK'} Personal-context mutation tools: ${mutationTools.length ? mutationTools.map((tool) => tool.id).join(', ') : 'none exposed'}`);
+  const authRows = await new AuthRegistry().status();
+  for (const row of authRows) {
+    const level = row.status === 'CONNECTED' ? 'OK' : row.status === 'ADMIN_APPROVAL_REQUIRED' ? 'WARN' : 'WARN';
+    ui.line(`${level} Auth ${row.name}: ${row.status}; account=${row.account ?? '(none)'}; token=${row.token}; ${row.detail}`);
+  }
   ui.line('OK Audit events: MCP sessions and tool calls are written with secret redaction');
 
   const lmBind = spawnSync('lsof', ['-nP', '-iTCP:1234', '-sTCP:LISTEN'], { encoding: 'utf8' });
