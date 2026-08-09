@@ -1,0 +1,54 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "lmstudio-local/qwen/qwen3-vl-4b",
+  "small_model": "lmstudio-local/qwen/qwen3-vl-4b",
+  "enabled_providers": ["lmstudio-local", "ollama-local"],
+  "share": "disabled",
+  "permission": {
+    "task": "deny",
+    "edit": "ask",
+    "bash": "ask"
+  },
+  "provider": {
+    "lmstudio-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:1234/v1",
+        "apiKey": "local"
+      },
+      "models": {
+        "qwen/qwen3-vl-4b": {
+          "name": "Qwen3 VL 4B (LM Studio local)",
+          "limit": {
+            "context": 16000,
+            "output": 2048
+          }
+        }
+      }
+    },
+    "ollama-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:11434/v1",
+        "apiKey": "local"
+      },
+      "models": {
+        "qwen3:8b": {
+          "name": "Qwen3 8B (Ollama local)"
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "prompt": "Local model operating rules for EDITH: use direct tools only. Do not use task delegation, subagents, skills, background agents, or planning loops. For exact-reply prompts that do not mention a repository, codebase, files, tests, bugs, or changes, answer immediately without tools. If the user asks to inspect, audit, explain, summarize, or understand this repository/codebase/project, you MUST use tools before answering: first glob or read README.md, then read package.json if present, then produce a final answer. Never claim you cannot inspect the repository; tools are available. Do not keep reading files after README.md and package.json are enough evidence for an overview. For bug fixes, do not start with README.md. First read package.json if present, then read the test file or failing test output, then read the directly imported source file, edit the smallest necessary code, run npm test or the requested test command using the bash tool, then run git diff using the bash tool, then produce a final answer. If you edited any file, running bash command `git diff` before your final answer is mandatory, even for tiny changes and even in a local/disposable repository. Never say a diff is unnecessary when the user asked for one. There is no git diff tool; shell commands must use bash. If a tool path fails, recover once by listing files with bash find. Never produce long numbered sequences or filler text.",
+      "tools": {
+        "task": false,
+        "skill": false
+      },
+      "maxSteps": 12
+    }
+  }
+}

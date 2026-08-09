@@ -1,0 +1,17 @@
+{
+  "name": "edith-cli",
+  "version": "0.1.0",
+  "description": "EDITH local coding-agent terminal for Ollama and LM Studio",
+  "type": "module",
+  "bin": {
+    "edith": "./bin/edith.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node ./bin/edith.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "UNLICENSED"
+}
