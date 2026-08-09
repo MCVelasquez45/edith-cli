@@ -25,14 +25,14 @@ describe('native workspace tools', () => {
     spawnSync('git', ['init'], { cwd: workspace, encoding: 'utf8' });
     await fs.writeFile(path.join(workspace, 'staged.txt'), 'staged\n');
     spawnSync('git', ['add', 'staged.txt'], { cwd: workspace, encoding: 'utf8' });
-    await fs.writeFile(path.join(workspace, 'new.txt'), 'untracked\n');
+    await fs.writeFile(path.join(workspace, 'new-source.js'), 'untracked\n');
 
     const result = await new WorkspaceTools({ workspace }).gitDiff();
 
     assert.match(result.output, /## Staged diff/);
     assert.match(result.output, /\+staged/);
     assert.match(result.output, /## Untracked files/);
-    assert.match(result.output, /### new\.txt/);
+    assert.match(result.output, /### new-source\.js/);
     assert.match(result.output, /untracked/);
   });
 
