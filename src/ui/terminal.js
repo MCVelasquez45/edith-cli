@@ -3,17 +3,25 @@ import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 
 export const colors = {
-  reset: '\x1b[0m',
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-  green: (s) => `\x1b[32m${s}\x1b[0m`,
-  cyan: (s) => `\x1b[36m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[33m${s}\x1b[0m`,
-  red: (s) => `\x1b[31m${s}\x1b[0m`,
-  gray: (s) => `\x1b[90m${s}\x1b[0m`
+  get reset() { return supportsColor() ? '\x1b[0m' : ''; },
+  bold: (s) => colorize('1', s),
+  dim: (s) => colorize('2', s),
+  green: (s) => colorize('32', s),
+  cyan: (s) => colorize('36', s),
+  yellow: (s) => colorize('33', s),
+  red: (s) => colorize('31', s),
+  gray: (s) => colorize('90', s)
 };
 
 export class TerminalUI {
+  constructor({ stdout = process.stdout, stderr = process.stderr } = {}) {
+    this.stdout = stdout;
+    this.stderr = stderr;
+    this.isTTY = Boolean(stdout.isTTY);
+    this.useColor = supportsColor(stdout);
+    this.unicode = supportsUnicode();
+  }
+
   banner({ provider, model, cwd, sessionId, approval }) {
     const lines = [
       'EDITH',
@@ -29,11 +37,11 @@ export class TerminalUI {
   }
 
   line(text = '') {
-    process.stdout.write(`${text}\n`);
+    this.stdout.write(`${text}\n`);
   }
 
   activity(text) {
-    this.line(`${colors.cyan('●')} ${text}`);
+    this.line(`${this.symbol('working')} ${text}`);
   }
 
   warn(text) {
@@ -49,15 +57,33 @@ export class TerminalUI {
   }
 
   streamStart(label = 'EDITH') {
-    process.stdout.write(`\n${colors.bold(`${label}:`)}\n`);
+    this.stdout.write(`\n${colors.bold(`${label}:`)}\n`);
   }
 
   streamChunk(text) {
-    process.stdout.write(renderMarkdownLite(text));
+    this.stdout.write(renderMarkdownLite(sanitizeText(text)));
   }
 
   streamEnd() {
-    process.stdout.write('\n');
+    this.stdout.write('\n');
+  }
+
+  symbol(kind) {
+    const unicode = {
+      working: colors.cyan('●'),
+      success: colors.green('✓'),
+      error: colors.red('✗'),
+      warning: colors.yellow('!'),
+      spinner: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    };
+    const ascii = {
+      working: '*',
+      success: 'OK',
+      error: 'FAIL',
+      warning: 'WARN',
+      spinner: ['-', '\\', '|', '/']
+    };
+    return (this.unicode ? unicode : ascii)[kind];
   }
 
   diff(diffText) {
@@ -86,8 +112,36 @@ export class TerminalUI {
   }
 }
 
+export function supportsColor(stream = process.stdout) {
+  return Boolean(stream.isTTY) && !process.env.NO_COLOR && process.env.TERM !== 'dumb';
+}
+
+export function supportsUnicode() {
+  return process.platform !== 'win32' || /utf-?8/i.test(process.env.LC_ALL ?? process.env.LC_CTYPE ?? process.env.LANG ?? '');
+}
+
+function colorize(code, value) {
+  if (!supportsColor()) return String(value);
+  return `\x1b[${code}m${value}\x1b[0m`;
+}
+
 function renderMarkdownLite(text) {
   return text
     .replace(/`([^`]+)`/g, (_, code) => colors.cyan(code))
     .replace(/\*\*([^*]+)\*\*/g, (_, strong) => colors.bold(strong));
+}
+
+export function sanitizeText(text) {
+  return String(text)
+    .replace(/\bdon�t\b/g, 'don’t')
+    .replace(/\bcan�t\b/g, 'can’t')
+    .replace(/\bwon�t\b/g, 'won’t')
+    .replace(/\bisn�t\b/g, 'isn’t')
+    .replace(/\baren�t\b/g, 'aren’t')
+    .replace(/\bdoesn�t\b/g, 'doesn’t')
+    .replace(/\bdidn�t\b/g, 'didn’t')
+    .replace(/\bI�m\b/g, 'I’m')
+    .replace(/\byou�re\b/g, 'you’re')
+    .replace(/\bthey�re\b/g, 'they’re')
+    .replace(/\bwe�re\b/g, 'we’re');
 }

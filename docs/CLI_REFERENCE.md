@@ -10,6 +10,35 @@ edith
 
 Launches the native EDITH conversational TUI.
 
+Normal conversation is typed directly into the composer. EDITH shows compact action/status events for tools and delegation, then streams one assistant response:
+
+```text
+> What's the weather in Mesa?
+● Checking weather
+✓ Weather updated
+
+EDITH:
+...
+```
+
+Session commands:
+
+```text
+/help       Show session commands
+/model      Show or switch local model
+/models     List live local models
+/agents     Show specialist agents
+/tools      Show approved tools
+/context    Show personal-context connector status
+/brief      Build an on-demand personal brief
+/status     Show current session status
+/trace      Show the last route/tool trace
+/verbose    Toggle operational timings
+/doctor     Run live diagnostics
+/clear      Clear conversation context
+/exit       Leave EDITH
+```
+
 ```bash
 edith --model <provider:model>
 ```
@@ -77,4 +106,3 @@ edith mcp discover
 ```
 
 `edith mcp add` and `edith mcp remove` are intentionally not implemented yet.
-

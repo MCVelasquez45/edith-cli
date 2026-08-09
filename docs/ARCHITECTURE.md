@@ -20,6 +20,8 @@ User
 
 `src/native/agent-core.js` owns conversational routing, session history, capability grounding, and response synthesis. `src/native/interactive-cli.js` provides the terminal interface.
 
+The native TUI consumes semantic turn events through `src/native/progress-renderer.js` instead of printing orchestration details directly. Events cover working status, tool/delegation activity, response streaming, cancellation, and errors. This keeps terminal rendering separate from EDITH Core so future voice, desktop, web, or API interfaces can consume equivalent orchestration events without inheriting terminal behavior.
+
 ### Providers
 
 `src/providers/` discovers and streams local models from LM Studio and Ollama. EDITH does not hard-code model inventory; it queries live provider APIs.
@@ -77,4 +79,3 @@ Google/GitHub/GitLab
 ```
 
 EDITH should not automatically send email, calendar, Drive, Docs, contacts, or tasks to Codex, Claude Code, OpenCode, or web search providers.
-

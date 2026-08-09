@@ -115,7 +115,7 @@ export class EdithAgentCore {
     } catch (error) {
       result = { text: `I hit an error: ${error.message}`, route: plan.route, error };
     }
-    if (result.text) this.history.push({ role: 'assistant', content: result.text });
+    if (result.text && !events.signal?.aborted) this.history.push({ role: 'assistant', content: result.text });
     this.pruneHistory();
     return result;
   }
@@ -164,13 +164,13 @@ export class EdithAgentCore {
     }
     if (extractUrl(text)) return { route: 'network:fetch', reason: 'URL fetch request' };
     if (/\bwhat branch\b|\bwhich branch\b|\bbranch am i on\b/.test(lower)) return { route: 'workspace:branch', reason: 'Git branch request' };
-    if (/\b(what are we building|this repo|this repository|our current edith architecture|current edith architecture|edith architecture|architecture match|project)\b/.test(lower)) {
-      return { route: 'workspace:repo', reason: 'repository understanding request' };
-    }
     if (/\b(ask|have|tell|use|delegate to)\s+codex\b/.test(lower)) return { route: 'agent:codex', reason: 'explicit Codex request' };
     if (/\b(ask|have|tell|use|delegate to)\s+claude\b/.test(lower)) return { route: 'agent:claude', reason: 'explicit Claude request' };
     if (/\b(ask|have|tell|use|delegate to)\s+opencode\b/.test(lower) || /\bfix\b.*\btests?\b/.test(lower) || /\bmake the changes\b/.test(lower)) {
       return { route: 'agent:opencode', reason: 'coding-agent request' };
+    }
+    if (/\b(what are we building|this repo|this repository|our current edith architecture|current edith architecture|edith architecture|architecture match|project)\b/.test(lower)) {
+      return { route: 'workspace:repo', reason: 'repository understanding request' };
     }
     if (isCurrentExternalInformationRequest(lower)) {
       return /\b(documentation|docs|api|sdk)\b/.test(lower)
@@ -364,10 +364,27 @@ export class EdithAgentCore {
   }
 
   async answerBrief({ updated = false, events } = {}) {
+    this.emitBriefSourceActivity(events);
     events.activity?.(updated ? 'Building updated personal brief' : 'Building personal brief');
     this.trace.push({ type: 'tool', tool: 'context_brief', title: updated ? 'Building updated personal brief' : 'Building personal brief' });
     const text = await this.briefingEngine.buildBrief({ updated });
     return { text, route: updated ? 'context:brief-updated' : 'context:brief' };
+  }
+
+  emitBriefSourceActivity(events) {
+    const connected = new Set((this.contextStatusRows ?? []).filter((row) => row.health === ConnectorHealth.CONNECTED).map((row) => row.sourceType));
+    const steps = [
+      ['calendar', 'Checking calendar'],
+      ['email', 'Checking Gmail'],
+      ['task', 'Checking tasks'],
+      ['github', 'Checking GitHub'],
+      ['gitlab', 'Checking GitLab']
+    ];
+    for (const [sourceType, label] of steps) {
+      if (!connected.has(sourceType)) continue;
+      events.activity?.(label);
+      this.trace.push({ type: 'tool', tool: `context_${sourceType}`, title: label });
+    }
   }
 
   async answerEndOfDay(events) {
@@ -666,14 +683,28 @@ export class EdithAgentCore {
     ];
     let text = '';
     let first = true;
+    let stoppedForRepetition = false;
     events.streamStart?.('EDITH');
     for await (const chunk of await this.router.stream(messages, { maxTokens })) {
+      if (events.signal?.aborted) break;
+      if (wouldRepeatPathologically(text, chunk)) {
+        this.trace.push({ type: 'guardrail', title: 'Stopped repetitive model output' });
+        stoppedForRepetition = true;
+        break;
+      }
       if (first) {
         this.trace.push({ type: 'stream', title: 'First token received' });
         first = false;
       }
       text += chunk;
       events.streamChunk?.(chunk);
+    }
+    if (stoppedForRepetition) {
+      const ending = cleanStreamEnding(text);
+      if (ending) {
+        text += ending;
+        events.streamChunk?.(ending);
+      }
     }
     events.streamEnd?.();
     return { text: text.trim(), route, streamed: true };
@@ -817,6 +848,49 @@ function formatWeatherAnswer(userText, weather) {
 
 function formatTemp(value) {
   return `${Math.round(value)} F`;
+}
+
+function wouldRepeatPathologically(existing, chunk) {
+  const candidate = `${existing}${chunk}`;
+  const normalized = candidate.replace(/\s+/g, ' ').trim();
+  if (normalized.length < 160) return false;
+  const sentences = normalized
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 45);
+  const counts = new Map();
+  for (const sentence of sentences) {
+    const key = sentence.toLowerCase();
+    const next = (counts.get(key) ?? 0) + 1;
+    if (next >= 2) return true;
+    counts.set(key, next);
+  }
+  const tail = normalized.slice(-900).toLowerCase();
+  for (let size = 80; size <= 240; size += 40) {
+    if (tail.length < size * 2) continue;
+    const a = tail.slice(-size);
+    const b = tail.slice(-(size * 2), -size);
+    if (similarText(a, b) > 0.88) return true;
+  }
+  return false;
+}
+
+function cleanStreamEnding(text) {
+  const trimmed = text.trimEnd();
+  let suffix = '';
+  if (!/[.!?)]$/.test(trimmed)) suffix += '…';
+  const stars = (trimmed.match(/\*/g) ?? []).length;
+  if (stars % 2 === 1) suffix += '*';
+  return suffix;
+}
+
+function similarText(a, b) {
+  const aWords = a.split(/\W+/).filter(Boolean);
+  const bWords = b.split(/\W+/).filter(Boolean);
+  if (!aWords.length || !bWords.length) return 0;
+  const bSet = new Set(bWords);
+  const overlap = aWords.filter((word) => bSet.has(word)).length;
+  return overlap / Math.max(aWords.length, bWords.length);
 }
 
 function formatContextStatus(rows) {

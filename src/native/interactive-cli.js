@@ -2,6 +2,7 @@ import process from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { EdithAgentCore } from './agent-core.js';
+import { NativeTurnRenderer, createTurnEvents } from './progress-renderer.js';
 import { colors } from '../ui/terminal.js';
 import { runDoctor } from '../doctor.js';
 
@@ -19,7 +20,13 @@ export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
   });
 
   let multiline = [];
+  let activeTurn = null;
+  let verbose = false;
   rl.on('SIGINT', () => {
+    if (activeTurn) {
+      activeTurn.abort();
+      return;
+    }
     ui.line('');
     ui.warn('Cancelled. Type /exit to quit.');
     multiline = [];
@@ -43,11 +50,18 @@ export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
       multiline = [];
       if (!inputText) continue;
       if (inputText.startsWith('/')) {
-        const shouldExit = await handleSlashCommand(inputText, core, ui, cwd);
+        const state = { verbose };
+        const shouldExit = await handleSlashCommand(inputText, core, ui, cwd, state);
+        verbose = state.verbose;
         if (shouldExit) break;
         continue;
       }
-      await runConversationTurn(core, inputText, ui);
+      activeTurn = createActiveTurn();
+      try {
+        await runConversationTurn(core, inputText, ui, { verbose, signal: activeTurn.signal });
+      } finally {
+        activeTurn = null;
+      }
     }
   } finally {
     rl.close();
@@ -55,32 +69,64 @@ export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
   }
 }
 
-async function runConversationTurn(core, inputText, ui) {
+function createActiveTurn() {
+  const controller = new AbortController();
+  return {
+    signal: controller.signal,
+    abort: () => controller.abort()
+  };
+}
+
+async function runConversationTurn(core, inputText, ui, { verbose = false, signal = null } = {}) {
   ui.line(`${colors.dim('You:')} ${inputText}`);
+  const renderer = new NativeTurnRenderer({ ui, verbose });
+  const events = createTurnEvents(renderer);
+  events.working('Thinking');
   let didStream = false;
-  const result = await core.handleUserMessage(inputText, {
-    activity: (text) => ui.activity(text),
+  const resultPromise = core.handleUserMessage(inputText, {
+    signal,
+    activity: events.activity,
     streamStart: (label) => {
       didStream = true;
-      ui.streamStart(label);
+      events.streamStart(label);
     },
-    streamChunk: (chunk) => ui.streamChunk(chunk),
-    streamEnd: () => ui.streamEnd()
+    streamChunk: events.streamChunk,
+    streamEnd: events.streamEnd
   });
-  if (result.text && !didStream) {
-    ui.streamStart('EDITH');
-    ui.streamChunk(result.text);
-    ui.streamEnd();
+  try {
+    const result = signal
+      ? await Promise.race([
+        resultPromise,
+        new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('EDITH_OPERATION_CANCELLED')), { once: true }))
+      ])
+      : await resultPromise;
+    if (result.text && !didStream) {
+      events.streamStart('EDITH');
+      events.streamChunk(result.text);
+      events.streamEnd();
+    }
+  } catch (error) {
+    if (error.message === 'EDITH_OPERATION_CANCELLED') {
+      renderer.cancel();
+      resultPromise.catch(() => {});
+      return;
+    }
+    events.error(cleanErrorMessage(error));
   }
 }
 
-async function handleSlashCommand(inputText, core, ui, cwd) {
+async function handleSlashCommand(inputText, core, ui, cwd, state = { verbose: false }) {
   const [command, ...parts] = inputText.slice(1).trim().split(/\s+/);
   const rest = parts.join(' ').trim();
   if (command === 'exit' || command === 'quit') return true;
   if (command === 'help') return printSessionHelp(ui);
   if (command === 'status') return printStatus(core, ui);
   if (command === 'trace') return printTrace(core, ui);
+  if (command === 'verbose') {
+    state.verbose = !state.verbose;
+    ui.line(`Verbose mode ${state.verbose ? 'enabled' : 'disabled'}.`);
+    return false;
+  }
   if (command === 'models') return printModels(await core.listModels(), ui);
   if (command === 'model') {
     if (!rest) return printModels(await core.listModels(), ui, core.status());
@@ -95,11 +141,11 @@ async function handleSlashCommand(inputText, core, ui, cwd) {
   if (command === 'agents') return printAgents(await core.listAgents(), ui);
   if (command === 'tools') return printTools(core.listTools(), ui);
   if (command === 'context') {
-    await runConversationTurn(core, 'What personal context can you access?', ui);
+    await runConversationTurn(core, 'What personal context can you access?', ui, { verbose: state.verbose });
     return false;
   }
   if (command === 'brief') {
-    await runConversationTurn(core, rest ? `Give me an ${rest} brief` : 'Give me my brief.', ui);
+    await runConversationTurn(core, rest ? `Give me an ${rest} brief` : 'Give me my brief.', ui, { verbose: state.verbose });
     return false;
   }
   if (command === 'doctor') return runDoctor({ cwd, ui });
@@ -114,7 +160,7 @@ async function handleSlashCommand(inputText, core, ui, cwd) {
       ui.error('Usage: /ask <codex|claude|opencode> <prompt>');
       return false;
     }
-    await runConversationTurn(core, `Ask ${agent} ${promptParts.join(' ')}`, ui);
+    await runConversationTurn(core, `Ask ${agent} ${promptParts.join(' ')}`, ui, { verbose: state.verbose });
     return false;
   }
   ui.error(`Unknown command: /${command}. Try /help.`);
@@ -157,6 +203,7 @@ function printSessionHelp(ui) {
   ui.line('/brief                Build an on-demand personal brief');
   ui.line('/status               Show current session status');
   ui.line('/trace                Show last routing/tool trace');
+  ui.line('/verbose              Toggle operational timings');
   ui.line('/doctor               Run EDITH doctor');
   ui.line('/clear or /new        Clear conversation context');
   ui.line('/exit                 Leave EDITH');
@@ -229,4 +276,8 @@ function compactHome(value) {
 
 function stripAnsi(value) {
   return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function cleanErrorMessage(error) {
+  return String(error?.message ?? error).replace(/\s+/g, ' ').trim();
 }

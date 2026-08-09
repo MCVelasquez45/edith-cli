@@ -15,6 +15,7 @@ describe('native agent routing', () => {
 
     assert.equal(core.route("What do YOU think about Codex's recommendation?").route, 'local');
     assert.equal(core.route('Ask Codex to review this.').route, 'agent:codex');
+    assert.equal(core.route('Ask Codex to inspect this repository and report risk.').route, 'agent:codex');
   });
 
   it('routes live system and environment requests to tools', () => {
@@ -93,6 +94,38 @@ describe('native agent routing', () => {
     assert.equal(result.route, 'network:weather');
     assert.match(result.text, /could not retrieve current weather data/i);
     assert.doesNotMatch(result.text, /do not have web access|cannot access/i);
+  });
+
+  it('stops pathological repeated model output while streaming', async () => {
+    const core = new EdithAgentCore();
+    const chunks = [
+      'A robot heard a violin and paused to listen. ',
+      'It began to play with its own body, each movement a note. ',
+      'It began to play with its own body, each movement a note. ',
+      'It began to play with its own body, each movement a note. '
+    ];
+    core.router = {
+      modelGroups: [],
+      current: { model: { id: 'test-model' }, providerName: 'test-provider' },
+      stream: async () => (async function* stream() {
+        for (const chunk of chunks) yield chunk;
+      })()
+    };
+    core.workspaceInfo = { workspace: process.cwd() };
+    core.agentHealth = [];
+    core.contextStatusRows = [];
+    core.authStatusRows = [];
+    const streamed = [];
+    const result = await core.answerLocal('Tell a short story', '', {
+      streamStart: () => {},
+      streamChunk: (chunk) => streamed.push(chunk),
+      streamEnd: () => {}
+    });
+
+    assert.match(result.text, /robot heard a violin/);
+    assert.equal((result.text.match(/It began to play/g) ?? []).length, 1);
+    assert.equal((streamed.join('').match(/It began to play/g) ?? []).length, 1);
+    assert.match(result.text, /[.!?…]$/);
   });
 
   it('routes calendar-email correlation to personal context tools', () => {
