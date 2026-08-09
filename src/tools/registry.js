@@ -21,7 +21,7 @@ export class ToolRegistry {
 
 export function createDefaultToolRegistry() {
   const registry = new ToolRegistry();
-  for (const id of ['list_directory', 'read_file', 'search_files', 'git_status', 'git_diff']) {
+  for (const id of ['list_directory', 'read_file', 'search_files', 'git_status', 'git_diff', 'current_time', 'current_date', 'timezone', 'system_info']) {
     registry.register({
       id,
       name: id,
@@ -29,7 +29,7 @@ export function createDefaultToolRegistry() {
       source: 'edith-native',
       inputSchema: nativeToolSchema(id),
       risk: id.startsWith('git_') ? Risk.WORKSPACE_READ : Risk.READ_ONLY,
-      permissions: ['workspace-scoped', 'read-only'],
+      permissions: id.startsWith('current_') || id === 'timezone' || id === 'system_info' ? ['local-runtime', 'read-only'] : ['workspace-scoped', 'read-only'],
       availability: 'AVAILABLE'
     });
   }
@@ -72,11 +72,16 @@ function nativeToolDescription(id) {
     read_file: 'Read a text file within the active workspace.',
     search_files: 'Search text files within the active workspace.',
     git_status: 'Show Git status for the active workspace.',
-    git_diff: 'Show the current Git diff for the active workspace.'
+    git_diff: 'Show the current Git diff for the active workspace.',
+    current_time: 'Return the trusted current system time, optionally in a requested timezone.',
+    current_date: 'Return the trusted current system date, optionally in a requested timezone.',
+    timezone: 'Return the local system timezone.',
+    system_info: 'Return trusted local OS and runtime information.'
   }[id];
 }
 
 function nativeToolSchema(id) {
+  if (id === 'current_time' || id === 'current_date') return { type: 'object', properties: { timezone: { type: 'string' } } };
   if (id === 'read_file') return { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] };
   if (id === 'search_files') return { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] };
   if (id === 'list_directory') return { type: 'object', properties: { path: { type: 'string' } } };

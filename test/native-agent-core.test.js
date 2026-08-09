@@ -16,4 +16,16 @@ describe('native agent routing', () => {
     assert.equal(core.route("What do YOU think about Codex's recommendation?").route, 'local');
     assert.equal(core.route('Ask Codex to review this.').route, 'agent:codex');
   });
+
+  it('routes live system and environment requests to tools', () => {
+    const core = new EdithAgentCore();
+
+    assert.equal(core.route('What time is it right now?').route, 'system:time');
+    assert.equal(core.route('What time is it in California?').route, 'system:time');
+    assert.equal(core.route('What day is it?').route, 'system:date');
+    assert.equal(core.route('What timezone am I in?').route, 'system:timezone');
+    assert.equal(core.route('What Git branch am I on?').route, 'workspace:branch');
+    assert.equal(core.route('Can you search the web?').route, 'status:web');
+    assert.equal(core.route('What agents can you use right now?').route, 'status:agents');
+  });
 });

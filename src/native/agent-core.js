@@ -3,6 +3,7 @@ import { AgentRegistry } from '../agents/registry.js';
 import { createDefaultToolRegistry } from '../tools/registry.js';
 import { loadConfig } from '../config.js';
 import { WorkspaceTools, detectWorkspace } from './workspace-tools.js';
+import { SystemTools, extractTimezoneRequest } from './system-tools.js';
 
 const MAX_MESSAGES = 24;
 const MAX_TOOL_CONTEXT = 18000;
@@ -16,6 +17,8 @@ export class EdithAgentCore {
     this.maxIterations = 4;
     this.agentRegistry = new AgentRegistry();
     this.toolRegistry = createDefaultToolRegistry();
+    this.systemTools = new SystemTools();
+    this.agentHealth = [];
   }
 
   async initialize({ modelArg = null } = {}) {
@@ -23,6 +26,7 @@ export class EdithAgentCore {
     this.workspaceInfo = await detectWorkspace(this.cwd);
     this.workspaceTools = new WorkspaceTools({ workspace: this.workspaceInfo.workspace });
     this.router = await createProviderRouter({ ui: this.ui });
+    this.agentHealth = await this.agentRegistry.list();
     const configured = parseModelArg(modelArg) ?? {
       providerId: this.config.defaults.defaultAssistantProvider,
       modelId: this.config.defaults.defaultAssistantModel
@@ -40,7 +44,8 @@ export class EdithAgentCore {
       workspace: this.workspaceInfo.workspace,
       gitRoot: this.workspaceInfo.gitRoot,
       branch: this.workspaceInfo.branch,
-      toolsReady: this.toolRegistry.list().filter((tool) => tool.availability === 'AVAILABLE').length
+      toolsReady: this.toolRegistry.list().filter((tool) => tool.availability === 'AVAILABLE').length,
+      webReady: this.toolRegistry.get('web_search')?.availability === 'AVAILABLE'
     };
   }
 
@@ -97,6 +102,13 @@ export class EdithAgentCore {
   route(text) {
     const lower = text.toLowerCase();
     if (/^reply with exactly\b/.test(lower)) return { route: 'local', reason: 'exact response request' };
+    if (/\bwhat\s+time\b|\btime\s+is\s+it\b|\bcurrent\s+time\b/.test(lower)) return { route: 'system:time', reason: 'live time request' };
+    if (/\bwhat\s+(day|date)\b|\bcurrent\s+date\b|\btoday'?s\s+date\b/.test(lower)) return { route: 'system:date', reason: 'live date request' };
+    if (/\btimezone\b|\btime\s+zone\b/.test(lower)) return { route: 'system:timezone', reason: 'timezone request' };
+    if (/\bsystem info\b|\babout this mac\b|\bwhat machine\b/.test(lower)) return { route: 'system:info', reason: 'system information request' };
+    if (/\bwhat agents\b|\bagents can you\b|\bcan you use\b.*\bagents\b|\bis claude available\b/.test(lower)) return { route: 'status:agents', reason: 'agent availability request' };
+    if (/\bcan you search the web\b|\bweb search configured\b|\bsearch the web\b/.test(lower)) return { route: 'status:web', reason: 'web capability request' };
+    if (/\bwhat branch\b|\bwhich branch\b|\bbranch am i on\b/.test(lower)) return { route: 'workspace:branch', reason: 'Git branch request' };
     if (/\b(ask|have|tell|use|delegate to)\s+codex\b/.test(lower)) return { route: 'agent:codex', reason: 'explicit Codex request' };
     if (/\b(ask|have|tell|use|delegate to)\s+claude\b/.test(lower)) return { route: 'agent:claude', reason: 'explicit Claude request' };
     if (/\b(ask|have|tell|use|delegate to)\s+opencode\b/.test(lower) || /\bfix\b.*\btests?\b/.test(lower) || /\bmake the changes\b/.test(lower)) {
@@ -113,8 +125,15 @@ export class EdithAgentCore {
   }
 
   async executePlan(plan, userText, events) {
+    if (plan.route === 'system:time') return this.answerCurrentTime(userText, events);
+    if (plan.route === 'system:date') return this.answerCurrentDate(userText, events);
+    if (plan.route === 'system:timezone') return this.answerTimezone(events);
+    if (plan.route === 'system:info') return this.answerSystemInfo(events);
+    if (plan.route === 'status:agents') return this.answerAgentStatus(events);
+    if (plan.route === 'status:web') return this.answerWebStatus(events);
     if (plan.route === 'status:model') return this.answerModelStatus();
     if (plan.route === 'workspace:cwd') return this.answerWorkspaceStatus();
+    if (plan.route === 'workspace:branch') return this.answerBranchStatus(events);
     if (plan.route === 'workspace:git') return this.answerWithWorkspaceTools(userText, ['git_status', 'git_diff'], events);
     if (plan.route === 'workspace:repo') return this.answerWithWorkspaceTools(userText, ['list_directory', 'read_file:package.json', 'read_file:README.md', 'list_directory:src'], events);
     if (plan.route === 'agent:codex') return this.delegate('codex', userText, events);
@@ -135,6 +154,70 @@ export class EdithAgentCore {
     const lines = [`You launched me from ${status.cwd}.`];
     if (status.gitRoot) lines.push(`The Git workspace root is ${status.gitRoot}${status.branch ? ` on branch ${status.branch}` : ''}.`);
     return { text: lines.join('\n'), route: 'workspace:cwd' };
+  }
+
+  answerCurrentTime(userText, events) {
+    const timezone = extractTimezoneRequest(userText);
+    const result = this.systemTools.currentTime({ timezone });
+    this.trace.push({ type: 'tool', tool: 'current_time', title: result.title });
+    events.activity?.(result.title);
+    return {
+      text: `The current time in ${result.timezone} is ${result.output}.`,
+      route: 'system:time'
+    };
+  }
+
+  answerCurrentDate(userText, events) {
+    const timezone = extractTimezoneRequest(userText);
+    const result = this.systemTools.currentDate({ timezone });
+    this.trace.push({ type: 'tool', tool: 'current_date', title: result.title });
+    events.activity?.(result.title);
+    return {
+      text: `Today in ${result.timezone} is ${result.output}.`,
+      route: 'system:date'
+    };
+  }
+
+  answerTimezone(events) {
+    const result = this.systemTools.timezone();
+    this.trace.push({ type: 'tool', tool: 'timezone', title: result.title });
+    events.activity?.(result.title);
+    return { text: `Your local system timezone is ${result.output}.`, route: 'system:timezone' };
+  }
+
+  answerSystemInfo(events) {
+    const result = this.systemTools.systemInfo();
+    this.trace.push({ type: 'tool', tool: 'system_info', title: result.title });
+    events.activity?.(result.title);
+    return { text: result.output, route: 'system:info' };
+  }
+
+  async answerAgentStatus(events) {
+    events.activity?.('Checking agent availability');
+    this.trace.push({ type: 'agent_status', title: 'Checking agent availability' });
+    const rows = await this.liveAgentStatus();
+    const text = rows.map((agent) => `${agent.name}: ${agent.available ? 'available' : 'unavailable'}${agent.detail ? ` - ${agent.detail}` : ''}`).join('\n');
+    return { text, route: 'status:agents' };
+  }
+
+  answerWebStatus(events) {
+    events.activity?.('Checking web search backend');
+    this.trace.push({ type: 'tool', tool: 'web_search', title: 'Checking web search backend' });
+    const web = this.toolRegistry.get('web_search');
+    const fetch = this.toolRegistry.get('web_fetch');
+    const text = web?.availability === 'AVAILABLE'
+      ? 'Web search is configured.'
+      : `Web search is not configured. web_search=${web?.availability ?? 'UNKNOWN'}, web_fetch=${fetch?.availability ?? 'UNKNOWN'}.`;
+    return { text, route: 'status:web' };
+  }
+
+  answerBranchStatus(events) {
+    events.activity?.('Checking Git branch');
+    this.trace.push({ type: 'tool', tool: 'git_status', title: 'Checking Git branch' });
+    const text = this.workspaceInfo.branch
+      ? `You are on Git branch ${this.workspaceInfo.branch}.`
+      : 'I do not see an active Git branch from this workspace.';
+    return { text, route: 'workspace:branch' };
   }
 
   async answerWithWorkspaceTools(userText, toolSpecs, events) {
@@ -199,6 +282,23 @@ export class EdithAgentCore {
     };
   }
 
+  async liveAgentStatus() {
+    const rows = await this.agentRegistry.list();
+    const claude = this.agentRegistry.get('claude');
+    const claudeRow = rows.find((row) => row.id === 'claude');
+    if (claude && claudeRow?.available) {
+      try {
+        await claude.sendTask('Reply with exactly CLAUDE AVAILABILITY OK', { cwd: this.workspaceInfo.workspace, timeoutMs: 30000 });
+        claudeRow.detail = 'runtime available';
+      } catch (error) {
+        claudeRow.available = false;
+        claudeRow.detail = error.message;
+      }
+    }
+    this.agentHealth = rows;
+    return rows;
+  }
+
   async answerLocal(userText, extraContext = '', events = {}, { route = 'local', maxTokens = 900 } = {}) {
     const messages = [
       { role: 'system', content: this.systemPrompt() },
@@ -228,8 +328,25 @@ export class EdithAgentCore {
       'Prefer local models and read-only workspace tools when sufficient.',
       'OpenCode, Codex, and Claude are specialist agents that EDITH may delegate to when appropriate.',
       'Respect workspace boundaries. Do not expose secrets. Destructive work requires an approved specialist path.',
+      'Use EDITH tools for live state. Never guess current time, date, timezone, Git branch, agent health, or web availability.',
       `Current model: ${status.model} via ${status.provider}.`,
-      `Workspace: ${status.workspace}.`
+      `Workspace: ${status.workspace}.`,
+      this.capabilityManifest()
+    ].join('\n');
+  }
+
+  capabilityManifest() {
+    const availableTools = this.toolRegistry.list().filter((tool) => tool.availability === 'AVAILABLE').map((tool) => tool.id);
+    const unavailableTools = this.toolRegistry.list().filter((tool) => tool.availability !== 'AVAILABLE').map((tool) => `${tool.id} - ${tool.availability}`);
+    const agents = this.agentHealth.map((agent) => `${agent.name}: ${agent.available ? 'available' : `unavailable (${agent.detail})`}`);
+    const providers = this.router.modelGroups.map((group) => `${group.providerName}: ${group.models.length} model(s)`);
+    return [
+      'Capability manifest:',
+      `AVAILABLE tools: ${availableTools.join(', ') || 'none'}`,
+      `UNAVAILABLE tools: ${unavailableTools.join(', ') || 'none'}`,
+      `Agents: ${agents.join('; ') || 'unknown'}`,
+      `Providers: ${providers.join('; ') || 'unknown'}`,
+      'Workspace permissions: read/search/git status/git diff only; no native write or shell execution.'
     ].join('\n');
   }
 
