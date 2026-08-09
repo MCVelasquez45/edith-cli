@@ -143,6 +143,7 @@ export function createTurnEvents(renderer) {
       const kind = classifyActivity(message);
       renderer.emit({ type: kind, message: friendlyActivity(message) });
     },
+    activityError: (message) => renderer.emit({ type: 'tool:error', message: friendlyActivity(message) }),
     streamStart: (label) => renderer.emit({ type: 'response:start', label }),
     streamChunk: (text) => renderer.emit({ type: 'response:delta', text }),
     streamEnd: () => renderer.emit({ type: 'response:end' }),

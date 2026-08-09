@@ -10,7 +10,17 @@ edith
 
 Launches the native EDITH conversational TUI.
 
-Normal conversation is typed directly into the composer. EDITH shows compact action/status events for tools and delegation, then streams one assistant response:
+Normal conversation is typed directly into the composer. EDITH starts in a compact cockpit showing workspace, model, runtime, tool count, agent availability, and routing mode.
+
+The routing control shows:
+
+```text
+[AUTO] CLAUDE CODEX OPENCODE LOCAL
+```
+
+`AUTO` lets EDITH choose the path. Use `/agent <name>` to pin routing, or prefix one prompt with `@codex`, `@claude`, `@opencode`, or `@local`.
+
+EDITH shows compact action/status events for tools and delegation, then streams one assistant response:
 
 ```text
 > What's the weather in Mesa?
@@ -28,7 +38,9 @@ Session commands:
 /model      Show or switch local model
 /models     List live local models
 /agents     Show specialist agents
+/agent      Show or pin routing mode
 /tools      Show approved tools
+/tasks      Show session task activity
 /context    Show personal-context connector status
 /brief      Build an on-demand personal brief
 /status     Show current session status

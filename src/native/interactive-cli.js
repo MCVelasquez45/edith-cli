@@ -3,13 +3,31 @@ import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { EdithAgentCore } from './agent-core.js';
 import { NativeTurnRenderer, createTurnEvents } from './progress-renderer.js';
+import {
+  RoutingMode,
+  applyRoutingMode,
+  cockpitViewModel,
+  createTask,
+  extractPromptTarget,
+  finishTask,
+  normalizeRoutingMode,
+  renderAgentsView,
+  renderStartupCockpit,
+  renderStatusLine,
+  renderTasksView
+} from './cockpit-view.js';
 import { colors } from '../ui/terminal.js';
 import { runDoctor } from '../doctor.js';
 
 export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
   const modelArg = readFlag(args, '--model');
   const core = await new EdithAgentCore({ cwd, ui }).initialize({ modelArg });
-  printNativeBanner(core, ui);
+  const session = {
+    routingMode: RoutingMode.AUTO,
+    tasks: [],
+    verbose: false
+  };
+  printNativeCockpit(core, ui, session);
 
   const rl = createInterface({
     input,
@@ -21,7 +39,6 @@ export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
 
   let multiline = [];
   let activeTurn = null;
-  let verbose = false;
   rl.on('SIGINT', () => {
     if (activeTurn) {
       activeTurn.abort();
@@ -35,6 +52,7 @@ export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
 
   try {
     while (true) {
+      ui.line(renderStatusLine(cockpitViewModel(core, session), { width: ui.stdout?.columns ?? process.stdout.columns ?? 100 }));
       const prompt = multiline.length ? colors.green('... ') : colors.green('\n> ');
       let line;
       try {
@@ -50,15 +68,13 @@ export async function runNativeEdith({ cwd = process.cwd(), ui, args = [] }) {
       multiline = [];
       if (!inputText) continue;
       if (inputText.startsWith('/')) {
-        const state = { verbose };
-        const shouldExit = await handleSlashCommand(inputText, core, ui, cwd, state);
-        verbose = state.verbose;
+        const shouldExit = await handleSlashCommand(inputText, core, ui, cwd, session);
         if (shouldExit) break;
         continue;
       }
       activeTurn = createActiveTurn();
       try {
-        await runConversationTurn(core, inputText, ui, { verbose, signal: activeTurn.signal });
+        await runConversationTurn(core, inputText, ui, { session, signal: activeTurn.signal });
       } finally {
         activeTurn = null;
       }
@@ -77,15 +93,22 @@ function createActiveTurn() {
   };
 }
 
-async function runConversationTurn(core, inputText, ui, { verbose = false, signal = null } = {}) {
+async function runConversationTurn(core, inputText, ui, { session = { routingMode: RoutingMode.AUTO, tasks: [], verbose: false }, signal = null } = {}) {
+  const targeted = extractPromptTarget(inputText);
+  const effectiveMode = targeted.routingMode ?? session.routingMode;
+  const routed = applyRoutingMode(targeted.text, effectiveMode);
+  const task = createTask(session.tasks, targeted.text || inputText, routed.owner);
   ui.line(`${colors.dim('You:')} ${inputText}`);
-  const renderer = new NativeTurnRenderer({ ui, verbose });
+  ui.line(`${colors.dim(`Route: ${effectiveMode}`)}`);
+  const renderer = new NativeTurnRenderer({ ui, verbose: session.verbose });
   const events = createTurnEvents(renderer);
   events.working('Thinking');
   let didStream = false;
-  const resultPromise = core.handleUserMessage(inputText, {
+  const resultPromise = core.handleUserMessage(routed.text, {
     signal,
+    routeOverride: routed.routeOverride,
     activity: events.activity,
+    activityError: events.activityError,
     streamStart: (label) => {
       didStream = true;
       events.streamStart(label);
@@ -105,26 +128,43 @@ async function runConversationTurn(core, inputText, ui, { verbose = false, signa
       events.streamChunk(result.text);
       events.streamEnd();
     }
+    finishTask(task, 'DONE');
   } catch (error) {
     if (error.message === 'EDITH_OPERATION_CANCELLED') {
       renderer.cancel();
+      finishTask(task, 'ERROR');
       resultPromise.catch(() => {});
       return;
     }
+    finishTask(task, 'ERROR');
     events.error(cleanErrorMessage(error));
   }
 }
 
-async function handleSlashCommand(inputText, core, ui, cwd, state = { verbose: false }) {
+async function handleSlashCommand(inputText, core, ui, cwd, session) {
   const [command, ...parts] = inputText.slice(1).trim().split(/\s+/);
   const rest = parts.join(' ').trim();
   if (command === 'exit' || command === 'quit') return true;
   if (command === 'help') return printSessionHelp(ui);
   if (command === 'status') return printStatus(core, ui);
   if (command === 'trace') return printTrace(core, ui);
+  if (command === 'tasks') {
+    ui.line(renderTasksView(session.tasks));
+    return false;
+  }
+  if (command === 'agent') {
+    const next = normalizeRoutingMode(rest);
+    if (!next) {
+      ui.line(renderRoutingControlHelp(session.routingMode));
+      return false;
+    }
+    session.routingMode = next;
+    ui.line(`Routing pinned to ${session.routingMode}.`);
+    return false;
+  }
   if (command === 'verbose') {
-    state.verbose = !state.verbose;
-    ui.line(`Verbose mode ${state.verbose ? 'enabled' : 'disabled'}.`);
+    session.verbose = !session.verbose;
+    ui.line(`Verbose mode ${session.verbose ? 'enabled' : 'disabled'}.`);
     return false;
   }
   if (command === 'models') return printModels(await core.listModels(), ui);
@@ -138,14 +178,18 @@ async function handleSlashCommand(inputText, core, ui, cwd, state = { verbose: f
     }
     return false;
   }
-  if (command === 'agents') return printAgents(await core.listAgents(), ui);
+  if (command === 'agents') {
+    core.agentHealth = await core.listAgents();
+    ui.line(renderAgentsView(cockpitViewModel(core, session)));
+    return false;
+  }
   if (command === 'tools') return printTools(core.listTools(), ui);
   if (command === 'context') {
-    await runConversationTurn(core, 'What personal context can you access?', ui, { verbose: state.verbose });
+    await runConversationTurn(core, 'What personal context can you access?', ui, { session });
     return false;
   }
   if (command === 'brief') {
-    await runConversationTurn(core, rest ? `Give me an ${rest} brief` : 'Give me my brief.', ui, { verbose: state.verbose });
+    await runConversationTurn(core, rest ? `Give me an ${rest} brief` : 'Give me my brief.', ui, { session });
     return false;
   }
   if (command === 'doctor') return runDoctor({ cwd, ui });
@@ -160,36 +204,15 @@ async function handleSlashCommand(inputText, core, ui, cwd, state = { verbose: f
       ui.error('Usage: /ask <codex|claude|opencode> <prompt>');
       return false;
     }
-    await runConversationTurn(core, `Ask ${agent} ${promptParts.join(' ')}`, ui, { verbose: state.verbose });
+    await runConversationTurn(core, `@${agent} ${promptParts.join(' ')}`, ui, { session });
     return false;
   }
   ui.error(`Unknown command: /${command}. Try /help.`);
   return false;
 }
 
-function printNativeBanner(core, ui) {
-  const status = core.status();
-  const workspace = compactHome(status.workspace);
-  const cwd = compactHome(status.cwd);
-  const model = `${status.model} · ${status.provider}`;
-  const branch = status.branch ? ` · ${status.branch}` : '';
-  const lines = [
-    colors.bold('EDITH'),
-    'Local AI Orchestrator',
-    '',
-    `${model}`,
-    `${cwd}${status.gitRoot ? ` · repo ${workspace}${branch}` : ''}`,
-    `agents OpenCode · Claude · Codex   tools ${status.toolsReady} ready`,
-    '',
-    colors.dim('Type naturally. Use /help for commands. End a line with \\ for multiline input.')
-  ];
-  const width = Math.max(62, ...lines.map(stripAnsi).map((line) => line.length));
-  ui.line(colors.cyan(`┌${'─'.repeat(width + 2)}┐`));
-  for (const line of lines) {
-    const visible = stripAnsi(line).length;
-    ui.line(colors.cyan('│ ') + line + ' '.repeat(width - visible) + colors.cyan(' │'));
-  }
-  ui.line(colors.cyan(`└${'─'.repeat(width + 2)}┘`));
+function printNativeCockpit(core, ui, session) {
+  ui.line(renderStartupCockpit(cockpitViewModel(core, session), { width: ui.stdout?.columns ?? process.stdout.columns ?? 100 }));
 }
 
 function printSessionHelp(ui) {
@@ -198,6 +221,8 @@ function printSessionHelp(ui) {
   ui.line('/model [provider:id]  Show or switch model');
   ui.line('/models               List live local models');
   ui.line('/agents               Show specialist agents');
+  ui.line('/agent [name]         Pin routing: auto, claude, codex, opencode, local');
+  ui.line('/tasks                Show session task activity');
   ui.line('/tools                Show approved tools');
   ui.line('/context              Show personal-context connector status');
   ui.line('/brief                Build an on-demand personal brief');
@@ -208,6 +233,20 @@ function printSessionHelp(ui) {
   ui.line('/clear or /new        Clear conversation context');
   ui.line('/exit                 Leave EDITH');
   return false;
+}
+
+function renderRoutingControlHelp(mode) {
+  return [
+    'Routing modes:',
+    '  /agent auto      EDITH chooses the path',
+    '  /agent claude    Pin next requests to Claude',
+    '  /agent codex     Pin next requests to Codex',
+    '  /agent opencode  Pin next requests to OpenCode',
+    '  /agent local     Pin next requests to the local model',
+    '',
+    `Current: ${mode}`,
+    'One-shot targeting: @codex review this file'
+  ].join('\n');
 }
 
 function printStatus(core, ui) {
@@ -249,15 +288,6 @@ function printModels(groups, ui, status = null) {
   return false;
 }
 
-function printAgents(agents, ui) {
-  ui.section('Agents');
-  for (const agent of agents) {
-    ui.line(`${agent.available ? 'ready' : 'unavailable'} ${agent.name} ${agent.version || ''}`);
-    ui.line(`  ${agent.capabilities.join(', ')}`);
-  }
-  return false;
-}
-
 function printTools(tools, ui) {
   ui.section('Tools');
   for (const tool of tools) ui.line(`${tool.availability} ${tool.id} · ${tool.risk} · ${tool.description}`);
@@ -267,15 +297,6 @@ function printTools(tools, ui) {
 function readFlag(args, flag) {
   const idx = args.indexOf(flag);
   return idx >= 0 ? args[idx + 1] : null;
-}
-
-function compactHome(value) {
-  const home = process.env.HOME;
-  return home && value.startsWith(home) ? `~${value.slice(home.length)}` : value;
-}
-
-function stripAnsi(value) {
-  return value.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
 function cleanErrorMessage(error) {

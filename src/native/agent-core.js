@@ -107,7 +107,7 @@ export class EdithAgentCore {
     this.history.push({ role: 'user', content: userText });
     this.pruneHistory();
 
-    const plan = this.route(userText);
+    const plan = events.routeOverride ? { route: events.routeOverride, reason: 'explicit routing mode' } : this.route(userText);
     this.trace = [{ type: 'route', route: plan.route, reason: plan.reason }];
     let result;
     try {
@@ -581,6 +581,7 @@ export class EdithAgentCore {
       return { text: formatWeatherAnswer(userText, weather), route: 'network:weather', weather };
     } catch (error) {
       this.trace.push({ type: 'tool_error', tool: 'weather', title: 'Weather lookup failed', error: error.message });
+      events.activityError?.('Weather unavailable');
       if (this.toolRegistry.get('web_search')?.availability !== 'AVAILABLE') {
         return { text: `I could not retrieve current weather data: ${humanNetworkError(error)}`, route: 'network:weather', error };
       }
@@ -616,6 +617,7 @@ export class EdithAgentCore {
       this.lastNetworkItems = [{ title: page.title, url: page.finalUrl, source: 'direct-url' }];
       return this.synthesizeNetworkAnswer(userText, [{ result: { title: page.title, url: page.finalUrl, source: 'direct-url' }, page }], events, 'network:fetch');
     } catch (error) {
+      events.activityError?.(`Fetch failed for ${url}`);
       return { text: `EDITH could not fetch that URL: ${humanNetworkError(error)}`, route: 'network:fetch', error };
     }
   }
@@ -630,6 +632,7 @@ export class EdithAgentCore {
       const page = await this.network.fetch({ url: result.url });
       return this.synthesizeNetworkAnswer(userText, [{ result, page }], events, 'network:fetch-last');
     } catch (error) {
+      events.activityError?.(`Fetch failed for ${result.url}`);
       return { text: `EDITH could not fetch that source: ${humanNetworkError(error)}`, route: 'network:fetch-last', error };
     }
   }

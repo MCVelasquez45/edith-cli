@@ -57,6 +57,17 @@ describe('native progress renderer', () => {
     assert.doesNotMatch(out, /late output/);
   });
 
+  it('renders tool error status semantically', () => {
+    const ui = testUi({ isTTY: false });
+    const renderer = new NativeTurnRenderer({ ui });
+    const events = createTurnEvents(renderer);
+    events.activity('Fetching localhost');
+    events.activityError('Fetch failed for localhost');
+    const out = ui.output();
+    assert.match(out, /Reading sources/);
+    assert.match(out, /Fetch failed/);
+  });
+
   it('preserves UTF-8 status and response text', () => {
     const ui = testUi({ isTTY: false });
     const renderer = new NativeTurnRenderer({ ui });
