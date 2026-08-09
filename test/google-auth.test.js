@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { GoogleWorkspaceAuthProvider, buildAuthUrl, generateCodeVerifier, parseCallbackUrl } from '../src/auth/google-oauth.js';
 import { AuthState, normalizeGoogleAuthError } from '../src/auth/errors.js';
-import { scopesFor } from '../src/auth/google-scopes.js';
+import { GOOGLE_SCOPE_BUNDLES, scopesFor } from '../src/auth/google-scopes.js';
 import { MemoryTokenStore } from '../src/auth/token-store.js';
 
 describe('google oauth foundation', () => {
@@ -43,6 +43,7 @@ describe('google oauth foundation', () => {
     const provider = new GoogleWorkspaceAuthProvider({
       tokenStore: new MemoryTokenStore(),
       metadataFile: await tempFile(),
+      clientConfig: {},
       fetchImpl: async () => new Response('{}')
     });
 
@@ -122,6 +123,22 @@ describe('google oauth foundation', () => {
     const revoked = normalizeGoogleAuthError({ code: 'invalid_grant', message: 'Token has been revoked' });
     assert.equal(revoked.status, AuthState.DISCONNECTED);
     assert.doesNotMatch(revoked.message, /refresh_token=/);
+  });
+
+  it('defines a personal Workspace upgrade without broad everything scopes', () => {
+    const scopes = scopesFor(GOOGLE_SCOPE_BUNDLES.personalWorkspace);
+
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/calendar.events'));
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/gmail.modify'));
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/gmail.compose'));
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/gmail.send'));
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/drive.readonly'));
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/drive.file'));
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/documents'));
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/tasks'));
+    assert.ok(scopes.includes('https://www.googleapis.com/auth/contacts'));
+    assert.equal(scopes.includes('https://mail.google.com/'), false);
+    assert.equal(scopes.includes('https://www.googleapis.com/auth/drive'), false);
   });
 });
 

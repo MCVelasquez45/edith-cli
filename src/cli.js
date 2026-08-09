@@ -14,6 +14,7 @@ import { runNativeEdith } from './native/interactive-cli.js';
 import { ContextConnectorRegistry } from './context/registry.js';
 import { AuthRegistry } from './auth/registry.js';
 import { AuthState } from './auth/errors.js';
+import { GOOGLE_SCOPE_BUNDLES } from './auth/google-scopes.js';
 import { AuditLog } from './audit.js';
 
 const VERSION = '0.1.0';
@@ -59,6 +60,8 @@ Usage:
   edith agents          List available coding agents
   edith auth google --profile personal --scope calendar
                          Connect Google Workspace with local OAuth
+  edith auth google --profile personal --upgrade
+                         Upgrade personal Google profile for assistant actions
   edith auth status     Show authentication status
   edith context status  Show read-only personal context connector status
   edith ask local       Ask the default local model
@@ -207,6 +210,11 @@ function parseAuthOptions(args) {
       if (value === 'calendar') options.scopeKeys = ['identity', 'calendar'];
       if (value === 'identity') options.scopeKeys = ['identity'];
       index += 1;
+      continue;
+    }
+    if (arg === '--upgrade') {
+      if (options.profile !== 'personal') throw new Error('Google permission upgrade is only implemented for --profile personal.');
+      options.scopeKeys = GOOGLE_SCOPE_BUNDLES.personalWorkspace;
     }
   }
   return options;
@@ -223,6 +231,7 @@ function googleSetupInstructions() {
     '5. Run edith auth google --profile personal --scope calendar again.',
     '',
     'For the Calendar POC, EDITH will request: openid email profile and Google Calendar read-only.',
+    'For the personal assistant upgrade, run: edith auth google --profile personal --upgrade.',
     'Redirect: http://127.0.0.1:<random-port>/oauth/google/callback.',
     'Tokens will be stored in macOS Keychain; non-secret metadata is stored under ~/.config/edith.'
   ].join('\n');

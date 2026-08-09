@@ -3,7 +3,10 @@ import { GOOGLE_SCOPE_REGISTRY } from '../../auth/google-scopes.js';
 import { AuthState } from '../../auth/errors.js';
 import { ConnectorHealth, contextItem, limitItems } from '../models.js';
 
-const CALENDAR_SCOPE = GOOGLE_SCOPE_REGISTRY.calendar.scopes[0];
+const CALENDAR_READ_SCOPES = [
+  GOOGLE_SCOPE_REGISTRY.calendar.scopes[0],
+  ...GOOGLE_SCOPE_REGISTRY.calendarPersonal.scopes
+];
 const API_ROOT = 'https://www.googleapis.com/calendar/v3';
 
 export class GoogleCalendarConnector {
@@ -37,7 +40,7 @@ export class GoogleCalendarConnector {
         detail: `Google profile ${this.profile}: ${auth.status}. ${auth.detail}`
       };
     }
-    if (!auth.scopes?.includes(CALENDAR_SCOPE)) {
+    if (!hasAnyCalendarScope(auth.scopes)) {
       return {
         id: this.id,
         name: this.name,
@@ -84,7 +87,7 @@ export class GoogleCalendarConnector {
   }
 
   async getCalendars({ limit = 250 } = {}) {
-    const token = await this.authProvider.accessToken({ requiredScopes: [CALENDAR_SCOPE] });
+    const token = await this.authProvider.accessToken({ anyScope: CALENDAR_READ_SCOPES });
     const url = new URL(`${API_ROOT}/users/me/calendarList`);
     url.searchParams.set('maxResults', String(Math.min(limit, 250)));
     const data = await this.googleGet(url, token.accessToken);
@@ -120,7 +123,7 @@ export class GoogleCalendarConnector {
       url.searchParams.set('orderBy', 'startTime');
       url.searchParams.set('showDeleted', 'true');
       url.searchParams.set('maxResults', String(Math.min(limit, 250)));
-      const token = await this.authProvider.accessToken({ requiredScopes: [CALENDAR_SCOPE] });
+      const token = await this.authProvider.accessToken({ anyScope: CALENDAR_READ_SCOPES });
       const data = await this.googleGet(url, token.accessToken);
       for (const event of data.items ?? []) events.push(normalizeEvent({ event, calendar, profile: token.profile, account: token.account }));
     }
@@ -148,6 +151,10 @@ export class GoogleCalendarConnector {
     if (!response.ok) throw new Error(json.error?.message || json.error_description || 'Google Calendar API request failed.');
     return json;
   }
+}
+
+function hasAnyCalendarScope(scopes = []) {
+  return CALENDAR_READ_SCOPES.some((scope) => scopes.includes(scope));
 }
 
 function normalizeEvent({ event, calendar, profile, account }) {

@@ -186,11 +186,14 @@ export class GoogleWorkspaceAuthProvider {
     return next;
   }
 
-  async accessToken({ requiredScopes = [] } = {}) {
+  async accessToken({ requiredScopes = [], anyScope = [] } = {}) {
     const client = await this.loadClientConfig();
     const metadata = await readJson(this.metadataFile);
     for (const scope of requiredScopes) {
       if (!metadata.scopes?.includes(scope)) throw new AuthError(`Google profile ${this.profile} lacks required scope: ${scope}`, { code: 'missing_scope', status: AuthState.DISCONNECTED });
+    }
+    if (anyScope.length && !anyScope.some((scope) => metadata.scopes?.includes(scope))) {
+      throw new AuthError(`Google profile ${this.profile} lacks one of the required scopes: ${anyScope.join(', ')}`, { code: 'missing_scope', status: AuthState.DISCONNECTED });
     }
     const tokens = await this.tokenStore.get(this.keychainAccount);
     if (!tokens) throw new AuthError(`Google profile ${this.profile} is not authenticated.`, { code: 'not_authenticated', status: AuthState.DISCONNECTED });
