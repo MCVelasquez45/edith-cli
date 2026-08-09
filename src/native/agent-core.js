@@ -11,6 +11,7 @@ import { BriefingEngine } from '../context/briefing.js';
 import { ConnectorHealth, sourceLabel } from '../context/models.js';
 import { AuthRegistry } from '../auth/registry.js';
 import { AuthState } from '../auth/errors.js';
+import { classifySearchMode } from '../network/providers.js';
 
 const MAX_MESSAGES = 24;
 const MAX_TOOL_CONTEXT = 18000;
@@ -34,6 +35,7 @@ export class EdithAgentCore {
     this.authRegistry = new AuthRegistry();
     this.authStatusRows = [];
     this.lastPersonalContextItems = [];
+    this.lastNetworkItems = [];
   }
 
   async initialize({ modelArg = null } = {}) {
@@ -131,6 +133,9 @@ export class EdithAgentCore {
     if (/\bwhat'?s next\b|\bnext (meeting|event|up)\b/.test(lower)) return { route: 'context:next-event', reason: 'next personal-context item request' };
     if (/\bwhat calendars\b|\bwhich calendars\b|\bcalendars can you see\b/.test(lower)) return { route: 'context:calendars', reason: 'calendar discovery request' };
     if (/\bwhich calendar\b|\bwhere did you get\b.*\b(meeting|event|that)\b/.test(lower)) return { route: 'context:provenance', reason: 'personal context provenance request' };
+    if (/\b(email|mail|message)\b.*\b(related to|about)\b.*\b(next|meeting|event|calendar)\b|\b(next|meeting|event|calendar)\b.*\b(email|mail|message)\b/.test(lower)) {
+      return { route: 'context:calendar-email', reason: 'calendar and email correlation request' };
+    }
     if (/\btomorrow\b.*\b(calendar|look like|events?|meetings?)\b|\bwhat does tomorrow look like\b/.test(lower)) return { route: 'context:events-tomorrow', reason: 'calendar tomorrow request' };
     if (/\b(meetings?|events?)\b.*\b(left|remaining|today|tomorrow|afternoon)\b|\bwhat do i have (left|going on)\b/.test(lower)) {
       return { route: 'context:events', reason: 'calendar context request' };
@@ -140,7 +145,7 @@ export class EdithAgentCore {
     }
     if (/\b(tasks?|to dos?|todos?)\b.*\b(due|have|open|today|tomorrow)?\b|\bwhat tasks\b/.test(lower)) return { route: 'context:tasks', reason: 'task context request' };
     if (/\b(drive|files?)\b.*\b(find|search|list|latest|recent)\b|\bfind files\b/.test(lower)) return { route: 'context:drive', reason: 'Drive context request' };
-    if (/\b(review requests?|need to review|github reviews?|gitlab reviews?|assigned issues?)\b/.test(lower)) {
+    if (/\b(review requests?|need to review|github reviews?|gitlab reviews?|assigned issues?|github or gitlab|gitlab or github|github\b.*attention|gitlab\b.*attention)\b/.test(lower)) {
       return { route: 'context:development', reason: 'development context request' };
     }
     if (/\bwhat\s+time\b|\btime\s+is\s+it\b|\bcurrent\s+time\b/.test(lower)) return { route: 'system:time', reason: 'live time request' };
@@ -149,6 +154,9 @@ export class EdithAgentCore {
     if (/\bsystem info\b|\babout this mac\b|\bwhat machine\b/.test(lower)) return { route: 'system:info', reason: 'system information request' };
     if (/\bwhat agents\b|\bagents can you\b|\bcan you use\b.*\bagents\b|\bis claude available\b/.test(lower)) return { route: 'status:agents', reason: 'agent availability request' };
     if (/\bcan you search the web\b|\bweb search configured\b/.test(lower)) return { route: 'status:web', reason: 'web capability request' };
+    if (/\bopen (the )?(first|second|third|\d+)( source| result)?\b|\b(second|third) source\b/.test(lower)) {
+      return { route: 'network:fetch-last', reason: 'follow-up source fetch request' };
+    }
     if (extractUrl(text)) return { route: 'network:fetch', reason: 'URL fetch request' };
     if (/\bwhat branch\b|\bwhich branch\b|\bbranch am i on\b/.test(lower)) return { route: 'workspace:branch', reason: 'Git branch request' };
     if (/\b(what are we building|this repo|this repository|our current edith architecture|current edith architecture|edith architecture|architecture match|project)\b/.test(lower)) {
@@ -159,7 +167,7 @@ export class EdithAgentCore {
     if (/\b(ask|have|tell|use|delegate to)\s+opencode\b/.test(lower) || /\bfix\b.*\btests?\b/.test(lower) || /\bmake the changes\b/.test(lower)) {
       return { route: 'agent:opencode', reason: 'coding-agent request' };
     }
-    if (/\b(current|latest|recent|release|version|documentation|docs|api|sdk|search the web|look up|check the current)\b/.test(lower)) {
+    if (/\b(current|latest|recent|release|version|documentation|docs|api|sdk|search the web|look up|check the current|what are people saying|developers saying|discussion|discussions|forum|reddit|research companies|hiring|opportunities|what'?s happening|news)\b/.test(lower)) {
       return /\b(documentation|docs|api|sdk)\b/.test(lower)
         ? { route: 'network:docs', reason: 'current documentation request' }
         : { route: 'network:search', reason: 'current information request' };
@@ -180,6 +188,7 @@ export class EdithAgentCore {
     if (plan.route === 'network:search') return this.answerNetworkSearch(userText, events);
     if (plan.route === 'network:docs') return this.answerDocsLookup(userText, events);
     if (plan.route === 'network:fetch') return this.answerUrlFetch(userText, events);
+    if (plan.route === 'network:fetch-last') return this.answerLastSourceFetch(userText, events);
     if (plan.route === 'context:mutation-blocked') return this.answerMutationBlocked(events);
     if (plan.route === 'context:status') return this.answerContextStatus(events);
     if (plan.route === 'context:brief') return this.answerBrief({ updated: false, events });
@@ -188,6 +197,7 @@ export class EdithAgentCore {
     if (plan.route === 'context:next-event') return this.answerNextEvent(events);
     if (plan.route === 'context:calendars') return this.answerCalendars(events);
     if (plan.route === 'context:provenance') return this.answerContextProvenance(events);
+    if (plan.route === 'context:calendar-email') return this.answerCalendarEmailCorrelation(userText, events);
     if (plan.route === 'context:events-tomorrow') return this.answerEventsTomorrow(events);
     if (plan.route === 'context:events') return this.answerEventsToday(events);
     if (plan.route === 'context:email') return this.answerUnreadEmail(events);
@@ -268,8 +278,10 @@ export class EdithAgentCore {
     const web = this.toolRegistry.get('web_search');
     const fetch = this.toolRegistry.get('web_fetch');
     const docs = this.toolRegistry.get('docs_lookup');
+    const providers = this.network.status?.().search ?? [];
+    const readyProviders = providers.filter((provider) => provider.configured).map((provider) => provider.name).join(', ') || 'none';
     const text = web?.availability === 'AVAILABLE'
-      ? `Web search is configured. web_search=${web.availability}, web_fetch=${fetch?.availability ?? 'UNKNOWN'}, docs_lookup=${docs?.availability ?? 'UNKNOWN'}.`
+      ? `Web search is configured. web_search=${web.availability}, web_fetch=${fetch?.availability ?? 'UNKNOWN'}, docs_lookup=${docs?.availability ?? 'UNKNOWN'}. Search providers: ${readyProviders}.`
       : `Web search is not configured. web_search=${web?.availability ?? 'UNKNOWN'}, web_fetch=${fetch?.availability ?? 'UNKNOWN'}.`;
     return { text, route: 'status:web' };
   }
@@ -289,6 +301,41 @@ export class EdithAgentCore {
     const rows = await this.contextRegistry.status({ refresh: true });
     this.contextStatusRows = rows;
     return { text: formatContextStatus(rows), route: 'context:status' };
+  }
+
+  async answerCalendarEmailCorrelation(userText, events) {
+    events.activity?.('Checking next calendar event');
+    this.trace.push({ type: 'tool', tool: 'context_next_event', title: 'Checking next calendar event' });
+    const event = await this.findCorrelationEvent(userText);
+    if (!event) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Google Calendar') || 'I could not find a matching upcoming calendar event to correlate with email.', route: 'context:calendar-email' };
+    events.activity?.('Searching Gmail for related messages');
+    this.trace.push({ type: 'tool', tool: 'context_email_search', title: 'Searching Gmail for related messages' });
+    const query = `"${event.title.replace(/"/g, '')}" newer_than:90d`;
+    const messages = await this.contextEngine.searchMessages({ query, limit: 8 });
+    this.lastPersonalContextItems = [event, ...messages];
+    const context = [
+      `Calendar event: ${event.title}`,
+      `When: ${formatDateTime(event.startAt)}`,
+      `Source: ${sourceLabel(event)}`,
+      '',
+      messages.length
+        ? messages.map((message) => `Email: ${message.title}; status=${message.status}; source=${sourceLabel(message)}; people=${message.people.join(', ')}`).join('\n')
+        : 'No related Gmail messages were returned for the bounded event-title search.'
+    ].join('\n');
+    const prompt = `User request: ${userText}\n\nApproved personal context:\n${context}\n\nAnswer as EDITH. Keep personal details local. Be concise and cite source labels.`;
+    return this.answerLocal(prompt, context, events, { route: 'context:calendar-email', maxTokens: 700 });
+  }
+
+  async findCorrelationEvent(userText) {
+    const explicit = extractQuotedOrNamedEvent(userText);
+    if (explicit) {
+      const now = new Date();
+      const upcoming = await this.contextEngine.getEventsBetween({ start: now, end: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), limit: 50 });
+      const lower = explicit.toLowerCase();
+      const match = upcoming.find((event) => event.title.toLowerCase().includes(lower));
+      if (match) return match;
+    }
+    return this.contextEngine.getNextEvent();
   }
 
   answerMutationBlocked(events) {
@@ -462,14 +509,21 @@ export class EdithAgentCore {
     events.activity?.('Searching web');
     this.trace.push({ type: 'tool', tool: 'web_search', title: 'Searching web' });
     try {
-      const results = await this.network.search({ query: userText, maxResults: 4 });
-      if (!results.length) return { text: 'I could not find a configured authoritative source for that query.', route: 'network:search' };
+      const mode = classifySearchMode(userText);
+      const results = await this.network.search({ query: userText, maxResults: 5, mode });
+      this.lastNetworkItems = results;
+      if (!results.length) return { text: 'I could not find web results for that query from configured search providers.', route: 'network:search' };
       const fetched = [];
-      for (const result of results.slice(0, 2)) {
-        events.activity?.(`Fetching ${new URL(result.url).hostname}`);
-        this.trace.push({ type: 'tool', tool: 'web_fetch', title: `Fetching ${result.url}` });
-        fetched.push({ result, page: await this.network.fetch({ url: result.url }) });
+      for (const result of results.slice(0, 3)) {
+        try {
+          events.activity?.(`Fetching ${new URL(result.url).hostname}`);
+          this.trace.push({ type: 'tool', tool: 'web_fetch', title: `Fetching ${result.url}` });
+          fetched.push({ result, page: await this.network.fetch({ url: result.url }) });
+        } catch (error) {
+          this.trace.push({ type: 'tool_error', tool: 'web_fetch', title: `Fetch failed for ${result.url}`, error: error.message });
+        }
       }
+      if (!fetched.length) return { text: `Search found sources, but EDITH could not fetch readable public pages.\n\nSources:\n${formatSources(results)}`, route: 'network:search' };
       return this.synthesizeNetworkAnswer(userText, fetched, events, 'network:search');
     } catch (error) {
       return { text: `EDITH could not retrieve current information: ${humanNetworkError(error)}`, route: 'network:search', error };
@@ -481,6 +535,7 @@ export class EdithAgentCore {
     this.trace.push({ type: 'tool', tool: 'docs_lookup', title: 'Reading official documentation' });
     try {
       const docs = await this.network.lookupDocs({ query: userText, maxResults: 3 });
+      this.lastNetworkItems = docs;
       if (!docs.length) return { text: 'I could not find configured official documentation for that request.', route: 'network:docs' };
       return this.synthesizeNetworkAnswer(userText, docs.map((doc) => ({ result: doc, page: doc.fetched })), events, 'network:docs');
     } catch (error) {
@@ -494,9 +549,24 @@ export class EdithAgentCore {
     this.trace.push({ type: 'tool', tool: 'web_fetch', title: `Fetching ${url}` });
     try {
       const page = await this.network.fetch({ url });
+      this.lastNetworkItems = [{ title: page.title, url: page.finalUrl, source: 'direct-url' }];
       return this.synthesizeNetworkAnswer(userText, [{ result: { title: page.title, url: page.finalUrl, source: 'direct-url' }, page }], events, 'network:fetch');
     } catch (error) {
       return { text: `EDITH could not fetch that URL: ${humanNetworkError(error)}`, route: 'network:fetch', error };
+    }
+  }
+
+  async answerLastSourceFetch(userText, events) {
+    const index = sourceIndexFromText(userText);
+    const result = this.lastNetworkItems[index];
+    if (!result) return { text: 'I do not have that source in the current session yet. Ask me to search first, then I can open a result.', route: 'network:fetch-last' };
+    events.activity?.(`Fetching ${new URL(result.url).hostname}`);
+    this.trace.push({ type: 'tool', tool: 'web_fetch', title: `Fetching ${result.url}` });
+    try {
+      const page = await this.network.fetch({ url: result.url });
+      return this.synthesizeNetworkAnswer(userText, [{ result, page }], events, 'network:fetch-last');
+    } catch (error) {
+      return { text: `EDITH could not fetch that source: ${humanNetworkError(error)}`, route: 'network:fetch-last', error };
     }
   }
 
@@ -507,7 +577,7 @@ export class EdithAgentCore {
       `Retrieved: ${page.retrievedAt}`,
       page.text
     ].join('\n')).join('\n\n').slice(0, MAX_TOOL_CONTEXT);
-    const sources = items.map(({ result }, index) => `${index + 1}. ${result.title} - ${result.url}`).join('\n');
+    const sources = formatSources(items.map(({ result }) => result));
     const prompt = [
       `User request: ${userText}`,
       'Use only the retrieved external information below for current claims.',
@@ -600,7 +670,7 @@ export class EdithAgentCore {
     return [
       `Personal context AVAILABLE: ${available.join(', ') || 'none'}`,
       `Personal context UNAVAILABLE: ${unavailable.join(', ') || 'none'}`,
-      'Personal context permissions: read-only; email/calendar/task/GitHub/GitLab mutations unavailable; keep personal context local unless explicitly approved.',
+      'Personal context permissions: reads may run automatically; Google personal writes require explicit confirmation; destructive or external writes require explicit confirmation; keep personal context local unless explicitly approved.',
       this.authCapabilityManifest()
     ].join('\n');
   }
@@ -608,7 +678,8 @@ export class EdithAgentCore {
   authCapabilityManifest() {
     const google = this.authStatusRows.find((row) => row.provider === 'google');
     if (!google || google.status !== AuthState.CONNECTED) return 'Google Workspace: unavailable';
-    return `Google Workspace identity: available (${google.account}); Calendar/Gmail/Drive/Tasks/Contacts: unavailable until read-only scopes and connectors are added.`;
+    const labels = google.approvedScopes?.length ? google.approvedScopes.join(', ') : 'identity';
+    return `Google Workspace identity: available (${google.account}); approved scope groups: ${labels}.`;
   }
 
   pruneHistory() {
@@ -657,6 +728,15 @@ function extractDriveQuery(text) {
   return `name contains '${term}' and trashed=false`;
 }
 
+function extractQuotedOrNamedEvent(text) {
+  const quoted = text.match(/"([^"]+)"/)?.[1];
+  if (quoted) return quoted.trim();
+  const named = text.match(/\bnext\s+(.+?)\s+(?:event|meeting)\b/i)?.[1];
+  if (named && !/\bcalendar\b/i.test(named)) return named.trim();
+  const allCaps = text.match(/\b([A-Z][A-Z0-9 ]{6,})\b/);
+  return allCaps?.[1]?.trim() ?? null;
+}
+
 function parseModelArg(value) {
   if (!value) return null;
   const colon = value.indexOf(':');
@@ -676,6 +756,19 @@ function buildDelegationPrompt(userText, history) {
 
 function extractUrl(text) {
   return text.match(/\b(?:https?|file):\/\/[^\s)]+/i)?.[0] ?? null;
+}
+
+function sourceIndexFromText(text) {
+  const lower = text.toLowerCase();
+  if (/\bfirst\b/.test(lower)) return 0;
+  if (/\bsecond\b/.test(lower)) return 1;
+  if (/\bthird\b/.test(lower)) return 2;
+  const match = lower.match(/\b(\d+)(?:st|nd|rd|th)?\b/);
+  return match ? Math.max(0, Number(match[1]) - 1) : 0;
+}
+
+function formatSources(results) {
+  return results.map((result, index) => `${index + 1}. ${result.title} - ${result.url}`).join('\n');
 }
 
 function humanNetworkError(error) {

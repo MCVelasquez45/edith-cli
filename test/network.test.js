@@ -1,7 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { assertPublicHttpUrl, isBlockedIp } from '../src/network/policy.js';
-import { OfficialSourceSearchProvider, DirectFetchProvider } from '../src/network/providers.js';
+import {
+  OfficialSourceSearchProvider,
+  DirectFetchProvider,
+  DuckDuckGoHtmlSearchProvider,
+  SearchProviderRegistry,
+  classifySearchMode,
+  parseDuckDuckGoHtml
+} from '../src/network/providers.js';
 import { EdithAgentCore } from '../src/native/agent-core.js';
 
 describe('network policy', () => {
@@ -53,6 +60,76 @@ describe('network providers', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('parses DuckDuckGo HTML results into normalized search results', async () => {
+    const html = `
+      <div class="result">
+        <div>
+          <a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Fpost%3Futm_source%3Dx">Local-first AI tools</a>
+          <a class="result__snippet">A useful result about local AI coding.</a>
+        </div>
+      </div>
+    `;
+    const parsed = parseDuckDuckGoHtml(html);
+    assert.equal(parsed[0].title, 'Local-first AI tools');
+    assert.equal(parsed[0].url, 'https://example.com/post?utm_source=x');
+    assert.match(parsed[0].snippet, /local AI coding/);
+  });
+
+  it('supports a no-key general web search provider', async () => {
+    const provider = new DuckDuckGoHtmlSearchProvider({
+      fetchImpl: async () => new Response(`
+        <div class="result"><div>
+          <a class="result__a" href="https://example.com/a">General result</a>
+          <div class="result__snippet">General web snippet</div>
+        </div></div>
+      `, { status: 200, headers: { 'content-type': 'text/html' } })
+    });
+    const results = await provider.search({ query: 'Search the web for local-first AI coding assistants', maxResults: 2 });
+    assert.equal(results[0].provider, 'duckduckgo-html');
+    assert.equal(results[0].resultType, 'general');
+  });
+
+  it('falls back across configured search providers', async () => {
+    const primary = { id: 'primary', name: 'Primary', search: async () => { throw new Error('offline'); } };
+    const secondary = {
+      id: 'secondary',
+      name: 'Secondary',
+      search: async () => [{ title: 'Fallback result', url: 'https://example.com/fallback', snippet: '', provider: 'secondary' }]
+    };
+    const registry = new SearchProviderRegistry({ providers: [primary, secondary] });
+    const results = await registry.search({ query: 'latest local AI tooling', maxResults: 1 });
+    assert.equal(results[0].title, 'Fallback result');
+  });
+
+  it('does not answer community searches from official documentation fallback', async () => {
+    const official = new OfficialSourceSearchProvider();
+    const registry = new SearchProviderRegistry({ providers: [official], officialProvider: official });
+    const results = await registry.search({ query: 'What are developers saying about OpenCode?', mode: 'COMMUNITY', maxResults: 3 });
+    assert.deepEqual(results, []);
+  });
+
+  it('ranks fetchable current sources ahead of Google News aggregators', async () => {
+    const registry = new SearchProviderRegistry({
+      providers: [{
+        id: 'mock',
+        name: 'Mock',
+        search: async () => [
+          { title: 'Google News - Artificial intelligence - Latest', url: 'https://news.google.com/topics/abc', snippet: 'latest', provider: 'mock' },
+          { title: 'The Future of Local AI: Trends and Innovations', url: 'https://dockyard.com/blog/local-ai', snippet: 'local AI trends', provider: 'mock' }
+        ]
+      }]
+    });
+    const results = await registry.search({ query: 'latest developments in local AI', mode: 'CURRENT', maxResults: 2 });
+    assert.equal(results[0].url, 'https://dockyard.com/blog/local-ai');
+  });
+
+  it('classifies search intent into specific modes', () => {
+    assert.equal(classifySearchMode('What are developers saying about OpenCode?'), 'COMMUNITY');
+    assert.equal(classifySearchMode('What is happening in AI today?'), 'CURRENT');
+    assert.equal(classifySearchMode('Check the current LM Studio API docs'), 'DOCUMENTATION');
+    assert.equal(classifySearchMode('Search the web for local AI tools'), 'GENERAL');
+  });
 });
 
 describe('network failure handling', () => {
@@ -64,5 +141,13 @@ describe('network failure handling', () => {
 
     assert.equal(result.route, 'network:search');
     assert.match(result.text, /connection failed|reset/i);
+  });
+
+  it('routes broad search and follow-up source fetches', () => {
+    const core = new EdithAgentCore();
+    assert.equal(core.route('What are people saying about OpenCode compared with Claude Code?').route, 'network:search');
+    assert.equal(core.route('Research companies hiring software engineers in Chandler Arizona.').route, 'network:search');
+    assert.equal(core.route('Open the second source and summarize it.').route, 'network:fetch-last');
+    assert.equal(core.route('What needs my attention in GitHub or GitLab?').route, 'context:development');
   });
 });

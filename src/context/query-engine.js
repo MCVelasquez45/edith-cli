@@ -36,6 +36,18 @@ export class ContextQueryEngine {
     return events.filter((event) => event.startAt && new Date(event.startAt) > now);
   }
 
+  async getEventsBetween({ start, end, limit = 20 } = {}) {
+    const rows = await this.registry.status();
+    const results = [];
+    for (const connector of this.registry.connectors.filter((item) => item.sourceType === 'calendar')) {
+      const row = rows.find((item) => item.id === connector.id);
+      if (row?.health === ConnectorHealth.CONNECTED && connector.getEventsBetween) {
+        results.push(...await connector.getEventsBetween({ start, end, limit }));
+      }
+    }
+    return limitItems(results.sort((a, b) => new Date(a.startAt ?? 0) - new Date(b.startAt ?? 0)), limit);
+  }
+
   async getNextEvent(now = new Date()) {
     const upcoming = await this.getEventsAfter(now);
     return upcoming.sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0] ?? null;

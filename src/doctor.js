@@ -7,6 +7,7 @@ import { McpRegistry } from './mcp/registry.js';
 import { createDefaultToolRegistry } from './tools/registry.js';
 import { ContextConnectorRegistry } from './context/registry.js';
 import { AuthRegistry } from './auth/registry.js';
+import { NetworkRegistry } from './network/providers.js';
 
 export async function runDoctor({ cwd, ui }) {
   ui.section('EDITH Doctor');
@@ -53,6 +54,10 @@ export async function runDoctor({ cwd, ui }) {
   const networkTools = tools.filter((tool) => ['web_search', 'web_fetch', 'docs_lookup'].includes(tool.id));
   const configuredNetworkTools = networkTools.filter((tool) => tool.availability === 'AVAILABLE').length;
   ui.line(`${configuredNetworkTools ? 'OK' : 'WARN'} Web/documentation tools: ${configuredNetworkTools}/${networkTools.length} backend(s) configured`);
+  const networkStatus = new NetworkRegistry().status();
+  const searchProviders = networkStatus.search.filter((provider) => provider.configured).map((provider) => provider.name).join(', ') || 'none';
+  ui.line(`${searchProviders === 'none' ? 'WARN' : 'OK'} General web search providers: ${searchProviders}`);
+  ui.line(`OK Web fetch security: public HTTP/HTTPS only; localhost/private/link-local/file URLs blocked`);
   const contextRows = await new ContextConnectorRegistry({ cwd }).status({ refresh: true });
   for (const row of contextRows) {
     ui.line(`${row.health === 'CONNECTED' ? 'OK' : 'WARN'} Context ${row.name}: ${row.health}; read-only=${row.readOnly ? 'yes' : 'no'}; ${row.detail}`);

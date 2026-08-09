@@ -55,7 +55,7 @@ export class GoogleCalendarConnector {
       };
     }
     try {
-      const calendars = await this.getCalendars({ limit: 1 });
+      const calendars = await this.getCalendars({ limit: 250 });
       this._status = {
         id: this.id,
         name: this.name,
@@ -108,7 +108,7 @@ export class GoogleCalendarConnector {
         hidden: calendar.hidden
       }
     }));
-    this._calendars = items;
+    if (limit >= 250) this._calendars = items;
     return { items, totalCount: data.items?.length ?? items.length };
   }
 

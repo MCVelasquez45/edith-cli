@@ -39,4 +39,10 @@ describe('native agent routing', () => {
     assert.equal(core.route('Explain what an MCP server is.').route, 'local');
     assert.equal(core.route('Does our current EDITH architecture match that?').route, 'workspace:repo');
   });
+
+  it('routes calendar-email correlation to personal context tools', () => {
+    const core = new EdithAgentCore();
+    assert.equal(core.route('Is there any email related to my next calendar event?').route, 'context:calendar-email');
+    assert.equal(core.route('Is there any email related to my next EDITH CROSS SOURCE TEST event?').route, 'context:calendar-email');
+  });
 });

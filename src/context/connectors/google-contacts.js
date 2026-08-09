@@ -11,7 +11,7 @@ export class GoogleContactsConnector extends GoogleApiConnector {
       name: 'Google Contacts',
       sourceType: 'contacts',
       scopes: GOOGLE_SCOPE_REGISTRY.contactsPersonal.scopes,
-      capabilities: ['contacts.read', 'contacts.create', 'contacts.update'],
+      capabilities: ['contacts.read', 'contacts.create', 'contacts.update', 'contacts.delete'],
       ...options
     });
   }
@@ -38,6 +38,30 @@ export class GoogleContactsConnector extends GoogleApiConnector {
     };
     const { json, token } = await this.googleFetch(`${API_ROOT}/people:createContact`, { method: 'POST', body });
     return normalizeContact({ person: json, profile: this.profile, account: token.account });
+  }
+
+  async getContact({ resourceName }) {
+    const url = new URL(`${API_ROOT}/${resourceName}`);
+    url.searchParams.set('personFields', 'names,emailAddresses,phoneNumbers,metadata');
+    const { json, token } = await this.googleFetch(url);
+    return normalizeContact({ person: json, profile: this.profile, account: token.account });
+  }
+
+  async updateContact({ resourceName, etag, givenName, familyName = '', email = null }) {
+    const url = new URL(`${API_ROOT}/${resourceName}:updateContact`);
+    url.searchParams.set('updatePersonFields', 'names,emailAddresses');
+    const body = {
+      etag,
+      names: [{ givenName, familyName }],
+      ...(email ? { emailAddresses: [{ value: email }] } : {})
+    };
+    const { json, token } = await this.googleFetch(url, { method: 'PATCH', body });
+    return normalizeContact({ person: json, profile: this.profile, account: token.account });
+  }
+
+  async deleteContact({ resourceName }) {
+    await this.googleFetch(`${API_ROOT}/${resourceName}:deleteContact`, { method: 'DELETE' });
+    return { ok: true, resourceName };
   }
 }
 

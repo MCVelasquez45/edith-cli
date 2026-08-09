@@ -185,7 +185,7 @@ function printAuthStatus(rows) {
     console.log(`Profile: ${row.profile ?? 'default'}`);
     console.log(`Status: ${row.status}`);
     console.log(`Account: ${row.account ?? '(none)'}`);
-    console.log(`Access: ${row.status === 'CONNECTED' ? 'Read-only foundation' : '(none)'}`);
+    console.log(`Access: ${authAccessLabel(row)}`);
     console.log('Scopes:');
     const scopes = row.approvedScopes?.length ? row.approvedScopes : row.scopes;
     for (const scope of scopes.length ? scopes : ['(none)']) console.log(`  - ${scope}`);
@@ -194,6 +194,14 @@ function printAuthStatus(rows) {
     console.log(`Token storage: ${row.storage}`);
     console.log(`Detail: ${row.detail}`);
   }
+}
+
+function authAccessLabel(row) {
+  if (row.status !== 'CONNECTED') return '(none)';
+  const scopes = row.approvedScopes ?? row.scopes ?? [];
+  if (scopes.some((scope) => /personal$/.test(scope))) return 'Personal Google Workspace read/write, confirmation-gated';
+  if (scopes.some((scope) => /calendar/.test(scope))) return 'Calendar read-only';
+  return 'Identity';
 }
 
 function parseAuthOptions(args) {
