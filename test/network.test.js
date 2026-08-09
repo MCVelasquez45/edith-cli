@@ -5,6 +5,7 @@ import {
   OfficialSourceSearchProvider,
   DirectFetchProvider,
   DuckDuckGoHtmlSearchProvider,
+  OpenMeteoWeatherProvider,
   SearchProviderRegistry,
   classifySearchMode,
   parseDuckDuckGoHtml
@@ -129,6 +130,45 @@ describe('network providers', () => {
     assert.equal(classifySearchMode('What is happening in AI today?'), 'CURRENT');
     assert.equal(classifySearchMode('Check the current LM Studio API docs'), 'DOCUMENTATION');
     assert.equal(classifySearchMode('Search the web for local AI tools'), 'GENERAL');
+  });
+
+  it('normalizes Open-Meteo weather responses', async () => {
+    const provider = new OpenMeteoWeatherProvider({
+      fetchImpl: async (url) => {
+        const href = String(url);
+        if (href.includes('geocoding-api.open-meteo.com')) {
+          return Response.json({
+            results: [{ name: 'Mesa', admin1: 'Arizona', country_code: 'US', latitude: 33.4152, longitude: -111.8315, timezone: 'America/Phoenix' }]
+          });
+        }
+        return Response.json({
+          timezone: 'America/Phoenix',
+          current: {
+            time: '2026-08-09T10:00',
+            temperature_2m: 101.4,
+            apparent_temperature: 100.2,
+            relative_humidity_2m: 18,
+            weather_code: 0,
+            wind_speed_10m: 5.5
+          },
+          daily: {
+            time: ['2026-08-09', '2026-08-10'],
+            weather_code: [0, 2],
+            temperature_2m_max: [108.1, 106.2],
+            temperature_2m_min: [84.2, 82.8],
+            precipitation_probability_max: [3, 20],
+            precipitation_sum: [0, 0],
+            wind_speed_10m_max: [11, 13]
+          }
+        });
+      }
+    });
+
+    const weather = await provider.getWeather({ location: 'Mesa AZ', days: 2 });
+    assert.equal(weather.location, 'Mesa, Arizona, US');
+    assert.equal(weather.current.conditions, 'Clear sky');
+    assert.equal(weather.current.temperature, 101.4);
+    assert.equal(weather.daily[1].conditions, 'Partly cloudy');
   });
 });
 

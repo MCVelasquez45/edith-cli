@@ -51,12 +51,18 @@ export async function runDoctor({ cwd, ui }) {
   ui.line(`OK Timeouts: MCP server timeouts configured; agent subprocesses use bounded execution`);
 
   const tools = createDefaultToolRegistry().list();
-  const networkTools = tools.filter((tool) => ['web_search', 'web_fetch', 'docs_lookup'].includes(tool.id));
+  const networkTools = tools.filter((tool) => ['web_search', 'web_fetch', 'docs_lookup', 'weather'].includes(tool.id));
   const configuredNetworkTools = networkTools.filter((tool) => tool.availability === 'AVAILABLE').length;
   ui.line(`${configuredNetworkTools ? 'OK' : 'WARN'} Web/documentation tools: ${configuredNetworkTools}/${networkTools.length} backend(s) configured`);
   const networkStatus = new NetworkRegistry().status();
   const searchProviders = networkStatus.search.filter((provider) => provider.configured).map((provider) => provider.name).join(', ') || 'none';
   ui.line(`${searchProviders === 'none' ? 'WARN' : 'OK'} General web search providers: ${searchProviders}`);
+  try {
+    const weather = await new NetworkRegistry().weather({ location: 'Mesa, Arizona', days: 1 });
+    ui.line(`OK Weather: ${networkStatus.weather.name}; verified for ${weather.location}`);
+  } catch (error) {
+    ui.line(`WARN Weather: ${networkStatus.weather.name}; configured but verification failed: ${error.message}`);
+  }
   ui.line(`OK Web fetch security: public HTTP/HTTPS only; localhost/private/link-local/file URLs blocked`);
   const contextRows = await new ContextConnectorRegistry({ cwd }).status({ refresh: true });
   for (const row of contextRows) {

@@ -63,6 +63,23 @@ export function createDefaultToolRegistry() {
     permissions: ['network', 'official-source-preferred'],
     availability: 'AVAILABLE'
   });
+  registry.register({
+    id: 'weather',
+    name: 'weather',
+    description: 'Retrieve structured current weather and forecast data for a location.',
+    source: 'edith',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        location: { type: 'string' },
+        days: { type: 'number' }
+      },
+      required: ['location']
+    },
+    risk: Risk.NETWORK,
+    permissions: ['network', 'public-weather-api'],
+    availability: 'AVAILABLE'
+  });
   for (const id of ['context_status', 'context_events', 'context_next_event', 'context_unread_email', 'context_email_search', 'context_tasks', 'context_github', 'context_gitlab', 'context_brief']) {
     registry.register({
       id,

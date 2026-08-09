@@ -36,6 +36,7 @@ export class EdithAgentCore {
     this.authStatusRows = [];
     this.lastPersonalContextItems = [];
     this.lastNetworkItems = [];
+    this.lastWeatherLocation = null;
   }
 
   async initialize({ modelArg = null } = {}) {
@@ -122,6 +123,9 @@ export class EdithAgentCore {
   route(text) {
     const lower = text.toLowerCase();
     if (/^reply with exactly\b/.test(lower)) return { route: 'local', reason: 'exact response request' };
+    if (isExplicitNoLiveRequest(lower) && isLiveWeatherRequest(lower, this.lastWeatherLocation)) {
+      return { route: 'live:requires-tool', reason: 'explicit request to avoid live retrieval for stale weather data' };
+    }
     if (isMutationRequest(lower)) return { route: 'context:mutation-blocked', reason: 'read-only personal context phase' };
     if (/\b(personal context|context can you access|context status)\b/.test(lower)) return { route: 'context:status', reason: 'personal context status request' };
     if (/\b(give me (my |an )?brief|updated brief|daily brief)\b/.test(lower)) {
@@ -154,6 +158,7 @@ export class EdithAgentCore {
     if (/\bsystem info\b|\babout this mac\b|\bwhat machine\b/.test(lower)) return { route: 'system:info', reason: 'system information request' };
     if (/\bwhat agents\b|\bagents can you\b|\bcan you use\b.*\bagents\b|\bis claude available\b/.test(lower)) return { route: 'status:agents', reason: 'agent availability request' };
     if (/\bcan you search the web\b|\bweb search configured\b/.test(lower)) return { route: 'status:web', reason: 'web capability request' };
+    if (isLiveWeatherRequest(lower, this.lastWeatherLocation)) return { route: 'network:weather', reason: 'live weather request' };
     if (/\bopen (the )?(first|second|third|\d+)( source| result)?\b|\b(second|third) source\b/.test(lower)) {
       return { route: 'network:fetch-last', reason: 'follow-up source fetch request' };
     }
@@ -167,7 +172,7 @@ export class EdithAgentCore {
     if (/\b(ask|have|tell|use|delegate to)\s+opencode\b/.test(lower) || /\bfix\b.*\btests?\b/.test(lower) || /\bmake the changes\b/.test(lower)) {
       return { route: 'agent:opencode', reason: 'coding-agent request' };
     }
-    if (/\b(current|latest|recent|release|version|documentation|docs|api|sdk|search the web|look up|check the current|what are people saying|developers saying|discussion|discussions|forum|reddit|research companies|hiring|opportunities|what'?s happening|news)\b/.test(lower)) {
+    if (isCurrentExternalInformationRequest(lower)) {
       return /\b(documentation|docs|api|sdk)\b/.test(lower)
         ? { route: 'network:docs', reason: 'current documentation request' }
         : { route: 'network:search', reason: 'current information request' };
@@ -185,6 +190,8 @@ export class EdithAgentCore {
     if (plan.route === 'system:info') return this.answerSystemInfo(events);
     if (plan.route === 'status:agents') return this.answerAgentStatus(events);
     if (plan.route === 'status:web') return this.answerWebStatus(events);
+    if (plan.route === 'live:requires-tool') return this.answerLiveRequiresTool(events);
+    if (plan.route === 'network:weather') return this.answerWeather(userText, events);
     if (plan.route === 'network:search') return this.answerNetworkSearch(userText, events);
     if (plan.route === 'network:docs') return this.answerDocsLookup(userText, events);
     if (plan.route === 'network:fetch') return this.answerUrlFetch(userText, events);
@@ -284,6 +291,15 @@ export class EdithAgentCore {
       ? `Web search is configured. web_search=${web.availability}, web_fetch=${fetch?.availability ?? 'UNKNOWN'}, docs_lookup=${docs?.availability ?? 'UNKNOWN'}. Search providers: ${readyProviders}.`
       : `Web search is not configured. web_search=${web?.availability ?? 'UNKNOWN'}, web_fetch=${fetch?.availability ?? 'UNKNOWN'}.`;
     return { text, route: 'status:web' };
+  }
+
+  answerLiveRequiresTool(events) {
+    events.activity?.('Checking live-information policy');
+    this.trace.push({ type: 'policy', title: 'Live information requires a trusted tool' });
+    return {
+      text: 'I cannot reliably provide current weather without using a trusted live-data tool. I will not guess current conditions from model memory.',
+      route: 'live:requires-tool'
+    };
   }
 
   answerBranchStatus(events) {
@@ -530,6 +546,37 @@ export class EdithAgentCore {
     }
   }
 
+  async answerWeather(userText, events) {
+    const location = extractWeatherLocation(userText, this.lastWeatherLocation);
+    events.activity?.(`Checking weather for ${location}`);
+    this.trace.push({ type: 'tool', tool: 'weather', title: `Checking weather for ${location}` });
+    try {
+      const weather = await this.network.weather({ location, days: 3 });
+      this.lastWeatherLocation = weather.location;
+      this.lastNetworkItems = [{
+        title: `${weather.location} weather`,
+        url: 'https://open-meteo.com/',
+        source: weather.source,
+        provider: weather.provider,
+        retrievedAt: weather.retrievedAt,
+        resultType: 'weather'
+      }];
+      return { text: formatWeatherAnswer(userText, weather), route: 'network:weather', weather };
+    } catch (error) {
+      this.trace.push({ type: 'tool_error', tool: 'weather', title: 'Weather lookup failed', error: error.message });
+      if (this.toolRegistry.get('web_search')?.availability !== 'AVAILABLE') {
+        return { text: `I could not retrieve current weather data: ${humanNetworkError(error)}`, route: 'network:weather', error };
+      }
+      events.activity?.('Searching web for weather fallback');
+      this.trace.push({ type: 'tool', tool: 'web_search', title: 'Searching web for weather fallback' });
+      try {
+        return await this.answerNetworkSearch(`current weather forecast ${location}`, events);
+      } catch {
+        return { text: `I could not retrieve current weather data: ${humanNetworkError(error)}`, route: 'network:weather', error };
+      }
+    }
+  }
+
   async answerDocsLookup(userText, events) {
     events.activity?.('Reading official documentation');
     this.trace.push({ type: 'tool', tool: 'docs_lookup', title: 'Reading official documentation' });
@@ -640,6 +687,7 @@ export class EdithAgentCore {
       'OpenCode, Codex, and Claude are specialist agents that EDITH may delegate to when appropriate.',
       'Respect workspace boundaries. Do not expose secrets. Destructive work requires an approved specialist path.',
       'Use EDITH tools for live state. Never guess current time, date, timezone, Git branch, agent health, or web availability.',
+      'Weather, markets, sports scores, current events, local business status, current prices, and latest software versions require live tools or a clear unavailable/error response.',
       `Current model: ${status.model} via ${status.provider}.`,
       `Workspace: ${status.workspace}.`,
       this.capabilityManifest()
@@ -690,6 +738,85 @@ export class EdithAgentCore {
 function isMutationRequest(lower) {
   return /\b(move|reschedule|cancel|create|update|delete|send|reply|archive|label|complete|merge|push)\b/.test(lower)
     && /\b(meeting|event|calendar|email|mail|message|task|issue|pr|pull request|mr|merge request|github|gitlab)\b/.test(lower);
+}
+
+function isExplicitNoLiveRequest(lower) {
+  return /\b(don'?t|do not|without|no)\s+(search|look up|use tools?|use live|use web|access web)\b|\bjust\s+(tell|guess)\b|\byou already know\b/.test(lower);
+}
+
+function isLiveWeatherRequest(lower, lastWeatherLocation = null) {
+  if (/\b(weather|forecast|temperature|temp|rain|snow|storm|humidity|wind|high|low|feels like)\b/.test(lower)
+    && /\b(now|right now|today|tomorrow|this week|outside|in|for|will|what|what'?s|current)\b/.test(lower)) return true;
+  return Boolean(lastWeatherLocation) && /\b(what about tomorrow|how about tomorrow|tomorrow\??|what about today|how about today|will it rain|what about the high|what about the low)\b/.test(lower);
+}
+
+function isCurrentExternalInformationRequest(lower) {
+  return /\b(current|latest|recent|release|version|documentation|docs|api|sdk|search the web|look up|check the current|what are people saying|developers saying|discussion|discussions|forum|reddit|research companies|hiring|opportunities|what'?s happening|news)\b/.test(lower)
+    || /\b(stock|stocks|market|markets|trading at|share price|crypto|bitcoin|ethereum|aapl|nvda|msft|googl|meta|tesla|tsla)\b/.test(lower)
+    || /\b(score|won the game|who won|standings|schedule|game today)\b/.test(lower)
+    || /\b(open right now|hours today|happening in .+ this weekend|events this weekend|price right now|cost right now)\b/.test(lower);
+}
+
+function extractWeatherLocation(text, lastWeatherLocation = null) {
+  const trimmed = text.replace(/[?.!]+$/g, '').trim();
+  if (lastWeatherLocation && /\b(what about|how about)?\s*tomorrow\b|\bwhat about today\b|\bwill it rain\b/.test(trimmed.toLowerCase()) && !/\b(in|for|near)\s+[a-z]/i.test(trimmed)) {
+    return lastWeatherLocation;
+  }
+  const explicit = trimmed.match(/\b(?:in|for|near)\s+(.+?)(?:\s+(?:right now|today|tomorrow|this week))?$/i)?.[1];
+  if (explicit) return normalizeWeatherLocationText(explicit);
+  const outside = trimmed.match(/\boutside\s+(.+)$/i)?.[1];
+  if (outside) return normalizeWeatherLocationText(outside);
+  const cleaned = normalizeWeatherLocationText(trimmed
+    .replace(/\bwhat'?s\b|\bwhat is\b|\bwill it\b|\bwhat will\b|\bwhat'?ll\b|\bweather\b|\bforecast\b|\btemperature\b|\btemp\b|\brain\b|\bsnow\b|\bstorm\b|\bhumidity\b|\bwind\b|\bhigh\b|\blow\b|\btoday\b|\btomorrow\b|\bright now\b|\bcurrent\b|\bbe\b|\bthe\b|\bin\b|\bfor\b|\?+/gi, ' '));
+  return cleaned || lastWeatherLocation || 'local weather';
+}
+
+function normalizeWeatherLocationText(value) {
+  return String(value)
+    .replace(/\baz\b/gi, 'Arizona')
+    .replace(/\bca\b/gi, 'California')
+    .replace(/\bny\b/gi, 'New York')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function formatWeatherAnswer(userText, weather) {
+  const lower = userText.toLowerCase();
+  const dayIndex = /\btomorrow\b/.test(lower) ? 1 : 0;
+  const day = weather.daily?.[dayIndex] ?? weather.daily?.[0] ?? {};
+  const current = weather.current ?? {};
+  const wantsRain = /\brain|precipitation|storm/.test(lower);
+  const wantsHigh = /\bhigh\b/.test(lower);
+  const wantsForecast = /\bforecast|tomorrow|today|will it|rain|high|low\b/.test(lower);
+  const lines = [];
+  if (wantsForecast && day.date) {
+    const summary = [
+      `${day.date} forecast for ${weather.location}: ${day.conditions}`,
+      day.high == null ? null : `high ${formatTemp(day.high)}`,
+      day.low == null ? null : `low ${formatTemp(day.low)}`,
+      day.precipitationProbability == null ? null : `${day.precipitationProbability}% precipitation chance`,
+      day.precipitation == null ? null : `${day.precipitation} in precipitation`,
+      day.windSpeedMax == null ? null : `wind up to ${day.windSpeedMax} mph`
+    ].filter(Boolean).join(', ');
+    lines.push(`${summary}.`);
+  }
+  if (!wantsForecast || wantsHigh || wantsRain) {
+    const now = [
+      `Right now in ${weather.location}: ${current.temperature == null ? 'temperature unavailable' : formatTemp(current.temperature)}`,
+      current.feelsLike == null ? null : `feels like ${formatTemp(current.feelsLike)}`,
+      current.conditions,
+      current.humidity == null ? null : `${current.humidity}% humidity`,
+      current.windSpeed == null ? null : `wind ${current.windSpeed} mph`
+    ].filter(Boolean).join(', ');
+    lines.unshift(`${now}.`);
+  }
+  lines.push(`Observed/forecast timestamp: ${weather.observedAt ?? weather.retrievedAt}; timezone: ${weather.timezone ?? 'unknown'}.`);
+  lines.push('Source: Open-Meteo Weather API.');
+  return lines.join('\n');
+}
+
+function formatTemp(value) {
+  return `${Math.round(value)} F`;
 }
 
 function formatContextStatus(rows) {

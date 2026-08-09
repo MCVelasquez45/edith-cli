@@ -36,11 +36,12 @@ const OFFICIAL_DOCS = [
 ];
 
 export class NetworkRegistry {
-  constructor({ searchProvider = null, fetchProvider = new DirectFetchProvider(), docsProvider = null } = {}) {
+  constructor({ searchProvider = null, fetchProvider = new DirectFetchProvider(), docsProvider = null, weatherProvider = new OpenMeteoWeatherProvider() } = {}) {
     searchProvider ??= createDefaultSearchProvider();
     this.searchProvider = searchProvider;
     this.fetchProvider = fetchProvider;
     this.docsProvider = docsProvider ?? new DocumentationProvider({ searchProvider, fetchProvider });
+    this.weatherProvider = weatherProvider;
   }
 
   async search(input) {
@@ -55,11 +56,16 @@ export class NetworkRegistry {
     return this.docsProvider.lookup(input);
   }
 
+  async weather(input) {
+    return this.weatherProvider.getWeather(input);
+  }
+
   status() {
     return {
       search: this.searchProvider.status?.() ?? [{ id: this.searchProvider.id, name: this.searchProvider.name, configured: this.searchProvider.configured !== false }],
       fetch: { id: this.fetchProvider.id, name: this.fetchProvider.name, configured: true },
-      docs: { id: this.docsProvider.id, name: this.docsProvider.name, configured: true }
+      docs: { id: this.docsProvider.id, name: this.docsProvider.name, configured: true },
+      weather: { id: this.weatherProvider.id, name: this.weatherProvider.name, configured: this.weatherProvider.configured !== false }
     };
   }
 }
@@ -238,6 +244,80 @@ export class DocumentationProvider {
   }
 }
 
+export class OpenMeteoWeatherProvider {
+  id = 'open-meteo';
+  name = 'Open-Meteo Weather API';
+  configured = true;
+
+  constructor({ fetchImpl = fetch } = {}) {
+    this.fetch = fetchImpl;
+  }
+
+  async getWeather({ location, days = 3 } = {}) {
+    const query = normalizeLocationQuery(location);
+    if (!query) throw new Error('weather requires a location');
+    const place = await this.geocode(query);
+    const forecast = await this.forecast(place, days);
+    return normalizeWeather({ place, forecast, provider: this.id });
+  }
+
+  async geocode(query) {
+    for (const attempt of geocodeAttempts(query)) {
+      const url = new URL('https://geocoding-api.open-meteo.com/v1/search');
+      url.searchParams.set('name', attempt);
+      url.searchParams.set('count', '5');
+      url.searchParams.set('language', 'en');
+      url.searchParams.set('format', 'json');
+      const response = await this.fetch(url, {
+        headers: { accept: 'application/json', 'user-agent': 'EDITH/0.1 weather' },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.reason || `Open-Meteo geocoding failed: HTTP ${response.status}`);
+      const results = json.results ?? [];
+      if (results.length) return bestGeocodeResult(results, query);
+    }
+    throw new Error(`No weather location matched "${query}"`);
+  }
+
+  async forecast(place, days) {
+    const url = new URL('https://api.open-meteo.com/v1/forecast');
+    url.searchParams.set('latitude', String(place.latitude));
+    url.searchParams.set('longitude', String(place.longitude));
+    url.searchParams.set('timezone', 'auto');
+    url.searchParams.set('temperature_unit', 'fahrenheit');
+    url.searchParams.set('wind_speed_unit', 'mph');
+    url.searchParams.set('precipitation_unit', 'inch');
+    url.searchParams.set('forecast_days', String(Math.min(Math.max(Number(days) || 3, 1), 7)));
+    url.searchParams.set('current', [
+      'temperature_2m',
+      'relative_humidity_2m',
+      'apparent_temperature',
+      'precipitation',
+      'rain',
+      'showers',
+      'weather_code',
+      'wind_speed_10m',
+      'wind_direction_10m'
+    ].join(','));
+    url.searchParams.set('daily', [
+      'weather_code',
+      'temperature_2m_max',
+      'temperature_2m_min',
+      'precipitation_probability_max',
+      'precipitation_sum',
+      'wind_speed_10m_max'
+    ].join(','));
+    const response = await this.fetch(url, {
+      headers: { accept: 'application/json', 'user-agent': 'EDITH/0.1 weather' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    const json = await response.json();
+    if (!response.ok) throw new Error(json.reason || `Open-Meteo forecast failed: HTTP ${response.status}`);
+    return json;
+  }
+}
+
 export class DirectFetchProvider {
   id = 'direct-fetch';
   name = 'Direct Public HTTP Fetch';
@@ -289,6 +369,118 @@ function normalizeResult(item, source) {
     retrievedAt: new Date().toISOString(),
     resultType: item.resultType ?? 'general'
   };
+}
+
+function normalizeLocationQuery(location) {
+  return String(location ?? '')
+    .replace(/[?.!]+$/g, '')
+    .replace(/\bweather\b|\bforecast\b|\btemperature\b|\bconditions\b|\bright now\b|\btoday\b|\btomorrow\b|\bwill it rain\b|\bwhat'?s\b|\bwhat is\b|\bin\b/gi, ' ')
+    .replace(/\baz\b/gi, 'Arizona')
+    .replace(/\bca\b/gi, 'California')
+    .replace(/\bny\b/gi, 'New York')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function geocodeAttempts(query) {
+  const attempts = [query];
+  const withoutState = query
+    .replace(/,\s*(Arizona|California|New York|Texas|Florida|Nevada|Utah|Colorado|Washington|Oregon)$/i, '')
+    .replace(/\b(Arizona|California|New York|Texas|Florida|Nevada|Utah|Colorado|Washington|Oregon)\b$/i, '')
+    .trim();
+  if (withoutState && withoutState !== query) attempts.push(withoutState);
+  const commaCity = query.split(',')[0]?.trim();
+  if (commaCity && !attempts.includes(commaCity)) attempts.push(commaCity);
+  return attempts;
+}
+
+function bestGeocodeResult(results, query) {
+  const normalizedQuery = query.toLowerCase();
+  const stateHints = [
+    ['arizona', 'Arizona'],
+    ['california', 'California'],
+    ['new york', 'New York']
+  ];
+  const hintedState = stateHints.find(([hint]) => normalizedQuery.includes(hint))?.[1];
+  if (hintedState) {
+    const stateMatch = results.find((item) => item.admin1?.toLowerCase() === hintedState.toLowerCase());
+    if (stateMatch) return stateMatch;
+  }
+  const usMatch = results.find((item) => item.country_code === 'US');
+  return usMatch ?? results[0];
+}
+
+function normalizeWeather({ place, forecast, provider }) {
+  const current = forecast.current ?? {};
+  const daily = forecast.daily ?? {};
+  return {
+    provider,
+    source: 'Open-Meteo',
+    location: [place.name, place.admin1, place.country_code].filter(Boolean).join(', '),
+    latitude: place.latitude,
+    longitude: place.longitude,
+    timezone: forecast.timezone ?? place.timezone ?? null,
+    retrievedAt: new Date().toISOString(),
+    observedAt: current.time ?? null,
+    current: {
+      temperature: numberOrNull(current.temperature_2m),
+      feelsLike: numberOrNull(current.apparent_temperature),
+      humidity: numberOrNull(current.relative_humidity_2m),
+      conditions: weatherCodeLabel(current.weather_code),
+      windSpeed: numberOrNull(current.wind_speed_10m),
+      windDirection: numberOrNull(current.wind_direction_10m),
+      precipitation: numberOrNull(current.precipitation),
+      rain: numberOrNull(current.rain),
+      showers: numberOrNull(current.showers)
+    },
+    daily: (daily.time ?? []).map((date, index) => ({
+      date,
+      conditions: weatherCodeLabel(daily.weather_code?.[index]),
+      high: numberOrNull(daily.temperature_2m_max?.[index]),
+      low: numberOrNull(daily.temperature_2m_min?.[index]),
+      precipitationProbability: numberOrNull(daily.precipitation_probability_max?.[index]),
+      precipitation: numberOrNull(daily.precipitation_sum?.[index]),
+      windSpeedMax: numberOrNull(daily.wind_speed_10m_max?.[index])
+    }))
+  };
+}
+
+function numberOrNull(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
+function weatherCodeLabel(code) {
+  const labels = {
+    0: 'Clear sky',
+    1: 'Mainly clear',
+    2: 'Partly cloudy',
+    3: 'Overcast',
+    45: 'Fog',
+    48: 'Depositing rime fog',
+    51: 'Light drizzle',
+    53: 'Moderate drizzle',
+    55: 'Dense drizzle',
+    56: 'Light freezing drizzle',
+    57: 'Dense freezing drizzle',
+    61: 'Slight rain',
+    63: 'Moderate rain',
+    65: 'Heavy rain',
+    66: 'Light freezing rain',
+    67: 'Heavy freezing rain',
+    71: 'Slight snow',
+    73: 'Moderate snow',
+    75: 'Heavy snow',
+    77: 'Snow grains',
+    80: 'Slight rain showers',
+    81: 'Moderate rain showers',
+    82: 'Violent rain showers',
+    85: 'Slight snow showers',
+    86: 'Heavy snow showers',
+    95: 'Thunderstorm',
+    96: 'Thunderstorm with slight hail',
+    99: 'Thunderstorm with heavy hail'
+  };
+  return labels[Number(code)] ?? 'Unknown conditions';
 }
 
 export function classifySearchMode(query) {
