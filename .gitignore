@@ -5,3 +5,5 @@ npm-debug.log*
 google-oauth-client.json
 client_secret*.json
 *-oauth-client.json
+opencode.local.json.backup-*
+*.backup-*
