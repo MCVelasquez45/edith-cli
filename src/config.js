@@ -12,6 +12,12 @@ export function defaultConfig() {
     version: 1,
     defaults: {
       codeModel: process.env.EDITH_CODE_MODEL ?? 'lmstudio-local/qwen/qwen3-vl-4b',
+      defaultAssistantProvider: process.env.EDITH_ASSISTANT_PROVIDER ?? 'lm-studio',
+      defaultAssistantModel: process.env.EDITH_ASSISTANT_MODEL ?? 'qwen/qwen3-vl-4b',
+      defaultCodingProvider: process.env.EDITH_CODING_PROVIDER ?? 'lm-studio',
+      defaultCodingModel: process.env.EDITH_CODING_MODEL ?? 'qwen/qwen3-vl-4b',
+      defaultVisionProvider: process.env.EDITH_VISION_PROVIDER ?? 'lm-studio',
+      defaultVisionModel: process.env.EDITH_VISION_MODEL ?? 'qwen/qwen3-vl-4b',
       localChatProvider: 'lm-studio',
       localChatModel: 'qwen/qwen3-vl-4b'
     },

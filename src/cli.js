@@ -10,17 +10,19 @@ import { EdithMcpClient } from './mcp/client.js';
 import { McpRegistry } from './mcp/registry.js';
 import { serveEdithMcpStdio } from './mcp/server.js';
 import { createDefaultToolRegistry } from './tools/registry.js';
+import { runNativeEdith } from './native/interactive-cli.js';
 
 const VERSION = '0.1.0';
 const DEFAULT_CODE_MODEL = process.env.EDITH_CODE_MODEL ?? 'lmstudio-local/qwen/qwen3-vl-4b';
 
 export async function main(args) {
-  const command = args[0] ?? 'code';
+  const command = args[0] ?? 'native';
   const cwd = process.cwd();
   const ui = new TerminalUI();
 
   if (command === '--version' || command === '-v') return console.log(VERSION);
   if (command === '--help' || command === '-h' || command === 'help') return printHelp();
+  if (command === 'native' || command === '--model') return runNativeEdith({ cwd, ui, args });
   if (command === 'mcp-server') return serveEdithMcpStdio();
   if (command === 'doctor') return runDoctor({ cwd, ui });
   if (command === 'code') return runCode(args.slice(1), cwd);
@@ -40,7 +42,8 @@ function printHelp() {
   console.log(`EDITH ${VERSION}
 
 Usage:
-  edith                 Launch verified local coding-agent terminal
+  edith                 Launch native EDITH conversational agent
+  edith --model <provider:model>
   edith code            Launch OpenCode with EDITH's verified local coding model
   edith code --model <provider/model>
   edith chat            Start direct local streaming chat
