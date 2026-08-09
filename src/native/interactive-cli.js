@@ -94,6 +94,14 @@ async function handleSlashCommand(inputText, core, ui, cwd) {
   }
   if (command === 'agents') return printAgents(await core.listAgents(), ui);
   if (command === 'tools') return printTools(core.listTools(), ui);
+  if (command === 'context') {
+    await runConversationTurn(core, 'What personal context can you access?', ui);
+    return false;
+  }
+  if (command === 'brief') {
+    await runConversationTurn(core, rest ? `Give me an ${rest} brief` : 'Give me my brief.', ui);
+    return false;
+  }
   if (command === 'doctor') return runDoctor({ cwd, ui });
   if (command === 'clear' || command === 'new') {
     core.clear();
@@ -145,6 +153,8 @@ function printSessionHelp(ui) {
   ui.line('/models               List live local models');
   ui.line('/agents               Show specialist agents');
   ui.line('/tools                Show approved tools');
+  ui.line('/context              Show personal-context connector status');
+  ui.line('/brief                Build an on-demand personal brief');
   ui.line('/status               Show current session status');
   ui.line('/trace                Show last routing/tool trace');
   ui.line('/doctor               Run EDITH doctor');

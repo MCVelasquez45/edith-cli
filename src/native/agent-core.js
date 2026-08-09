@@ -5,6 +5,10 @@ import { loadConfig } from '../config.js';
 import { WorkspaceTools, detectWorkspace } from './workspace-tools.js';
 import { SystemTools, extractTimezoneRequest } from './system-tools.js';
 import { NetworkRegistry } from '../network/providers.js';
+import { ContextConnectorRegistry } from '../context/registry.js';
+import { ContextQueryEngine } from '../context/query-engine.js';
+import { BriefingEngine } from '../context/briefing.js';
+import { ConnectorHealth, sourceLabel } from '../context/models.js';
 
 const MAX_MESSAGES = 24;
 const MAX_TOOL_CONTEXT = 18000;
@@ -21,6 +25,10 @@ export class EdithAgentCore {
     this.systemTools = new SystemTools();
     this.network = new NetworkRegistry();
     this.agentHealth = [];
+    this.contextRegistry = new ContextConnectorRegistry({ cwd });
+    this.contextEngine = new ContextQueryEngine({ registry: this.contextRegistry, systemTools: this.systemTools });
+    this.briefingEngine = new BriefingEngine({ queryEngine: this.contextEngine, systemTools: this.systemTools });
+    this.contextStatusRows = [];
   }
 
   async initialize({ modelArg = null } = {}) {
@@ -29,6 +37,7 @@ export class EdithAgentCore {
     this.workspaceTools = new WorkspaceTools({ workspace: this.workspaceInfo.workspace });
     this.router = await createProviderRouter({ ui: this.ui });
     this.agentHealth = await this.agentRegistry.list();
+    this.contextStatusRows = await this.contextRegistry.status({ refresh: true });
     const configured = parseModelArg(modelArg) ?? {
       providerId: this.config.defaults.defaultAssistantProvider,
       modelId: this.config.defaults.defaultAssistantModel
@@ -47,7 +56,8 @@ export class EdithAgentCore {
       gitRoot: this.workspaceInfo.gitRoot,
       branch: this.workspaceInfo.branch,
       toolsReady: this.toolRegistry.list().filter((tool) => tool.availability === 'AVAILABLE').length,
-      webReady: this.toolRegistry.get('web_search')?.availability === 'AVAILABLE'
+      webReady: this.toolRegistry.get('web_search')?.availability === 'AVAILABLE',
+      contextReady: this.contextStatusRows.filter((row) => row.health === ConnectorHealth.CONNECTED).length
     };
   }
 
@@ -104,6 +114,24 @@ export class EdithAgentCore {
   route(text) {
     const lower = text.toLowerCase();
     if (/^reply with exactly\b/.test(lower)) return { route: 'local', reason: 'exact response request' };
+    if (isMutationRequest(lower)) return { route: 'context:mutation-blocked', reason: 'read-only personal context phase' };
+    if (/\b(personal context|context can you access|context status)\b/.test(lower)) return { route: 'context:status', reason: 'personal context status request' };
+    if (/\b(give me (my |an )?brief|updated brief|daily brief)\b/.test(lower)) {
+      return { route: lower.includes('updated') ? 'context:brief-updated' : 'context:brief', reason: 'on-demand briefing request' };
+    }
+    if (/\b(how did we do today|what didn'?t get done|roll over|rollover|end of day)\b/.test(lower)) {
+      return { route: 'context:end-of-day', reason: 'end-of-day read-only review request' };
+    }
+    if (/\bwhat'?s next\b|\bnext (meeting|event|up)\b/.test(lower)) return { route: 'context:next-event', reason: 'next personal-context item request' };
+    if (/\b(meetings?|events?)\b.*\b(left|remaining|today|tomorrow|afternoon)\b|\bwhat do i have (left|going on)\b/.test(lower)) {
+      return { route: 'context:events', reason: 'calendar context request' };
+    }
+    if (/\b(unread|important)\b.*\b(email|mail|messages?)\b|\b(email|mail)\b.*\b(unread|important)\b/.test(lower)) {
+      return { route: 'context:email', reason: 'email context request' };
+    }
+    if (/\b(review requests?|need to review|github reviews?|gitlab reviews?|assigned issues?)\b/.test(lower)) {
+      return { route: 'context:development', reason: 'development context request' };
+    }
     if (/\bwhat\s+time\b|\btime\s+is\s+it\b|\bcurrent\s+time\b/.test(lower)) return { route: 'system:time', reason: 'live time request' };
     if (/\bwhat\s+(day|date)\b|\bcurrent\s+date\b|\btoday'?s\s+date\b/.test(lower)) return { route: 'system:date', reason: 'live date request' };
     if (/\btimezone\b|\btime\s+zone\b/.test(lower)) return { route: 'system:timezone', reason: 'timezone request' };
@@ -141,6 +169,15 @@ export class EdithAgentCore {
     if (plan.route === 'network:search') return this.answerNetworkSearch(userText, events);
     if (plan.route === 'network:docs') return this.answerDocsLookup(userText, events);
     if (plan.route === 'network:fetch') return this.answerUrlFetch(userText, events);
+    if (plan.route === 'context:mutation-blocked') return this.answerMutationBlocked(events);
+    if (plan.route === 'context:status') return this.answerContextStatus(events);
+    if (plan.route === 'context:brief') return this.answerBrief({ updated: false, events });
+    if (plan.route === 'context:brief-updated') return this.answerBrief({ updated: true, events });
+    if (plan.route === 'context:end-of-day') return this.answerEndOfDay(events);
+    if (plan.route === 'context:next-event') return this.answerNextEvent(events);
+    if (plan.route === 'context:events') return this.answerEventsToday(events);
+    if (plan.route === 'context:email') return this.answerUnreadEmail(events);
+    if (plan.route === 'context:development') return this.answerDevelopmentContext(events);
     if (plan.route === 'status:model') return this.answerModelStatus();
     if (plan.route === 'workspace:cwd') return this.answerWorkspaceStatus();
     if (plan.route === 'workspace:branch') return this.answerBranchStatus(events);
@@ -228,6 +265,72 @@ export class EdithAgentCore {
       ? `You are on Git branch ${this.workspaceInfo.branch}.`
       : 'I do not see an active Git branch from this workspace.';
     return { text, route: 'workspace:branch' };
+  }
+
+  async answerContextStatus(events) {
+    events.activity?.('Checking personal context connectors');
+    this.trace.push({ type: 'tool', tool: 'context_status', title: 'Checking personal context connectors' });
+    const rows = await this.contextRegistry.status({ refresh: true });
+    this.contextStatusRows = rows;
+    return { text: formatContextStatus(rows), route: 'context:status' };
+  }
+
+  answerMutationBlocked(events) {
+    events.activity?.('Enforcing read-only personal context policy');
+    this.trace.push({ type: 'policy', title: 'Blocking personal-context mutation' });
+    return {
+      text: 'Personal context is read-only in this phase. I can inspect and summarize connected calendars, email, tasks, GitHub, and GitLab, but I cannot send email, modify events, update tasks, create issues, merge PRs/MRs, or mutate external systems.',
+      route: 'context:mutation-blocked'
+    };
+  }
+
+  async answerBrief({ updated = false, events } = {}) {
+    events.activity?.(updated ? 'Building updated personal brief' : 'Building personal brief');
+    this.trace.push({ type: 'tool', tool: 'context_brief', title: updated ? 'Building updated personal brief' : 'Building personal brief' });
+    const text = await this.briefingEngine.buildBrief({ updated });
+    return { text, route: updated ? 'context:brief-updated' : 'context:brief' };
+  }
+
+  async answerEndOfDay(events) {
+    events.activity?.('Building read-only end-of-day review');
+    this.trace.push({ type: 'tool', tool: 'context_brief', title: 'Building read-only end-of-day review' });
+    return { text: await this.briefingEngine.buildEndOfDay(), route: 'context:end-of-day' };
+  }
+
+  async answerNextEvent(events) {
+    events.activity?.('Checking next calendar event');
+    this.trace.push({ type: 'tool', tool: 'context_next_event', title: 'Checking next calendar event' });
+    const next = await this.contextEngine.getNextEvent();
+    if (!next) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Calendar') || 'I do not see an upcoming calendar event from configured read-only sources.', route: 'context:next-event' };
+    return { text: `Next up: ${next.title} at ${formatDateTime(next.startAt)}. Source: ${sourceLabel(next)}.`, route: 'context:next-event' };
+  }
+
+  async answerEventsToday(events) {
+    events.activity?.('Checking calendar events');
+    this.trace.push({ type: 'tool', tool: 'context_events', title: 'Checking calendar events' });
+    const remaining = await this.contextEngine.getEventsAfter();
+    if (!remaining.length) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Calendar') || 'No remaining calendar events were returned by configured read-only sources.', route: 'context:events' };
+    return { text: remaining.map((event) => `${formatDateTime(event.startAt)} - ${event.title} (${sourceLabel(event)})`).join('\n'), route: 'context:events' };
+  }
+
+  async answerUnreadEmail(events) {
+    events.activity?.('Checking unread email');
+    this.trace.push({ type: 'tool', tool: 'context_unread_email', title: 'Checking unread email' });
+    const messages = await this.contextEngine.getUnreadMessages();
+    if (!messages.length) return { text: sourceUnavailableText(await this.contextRegistry.status(), 'Email') || 'No unread email was returned by configured read-only sources.', route: 'context:email' };
+    return { text: messages.map((message) => `${message.title} (${sourceLabel(message)})`).join('\n'), route: 'context:email' };
+  }
+
+  async answerDevelopmentContext(events) {
+    events.activity?.('Checking development review context');
+    this.trace.push({ type: 'tool', tool: 'context_github', title: 'Checking GitHub/GitLab review context' });
+    const [reviews, issues] = await Promise.all([
+      this.contextEngine.getReviewRequests({ limit: 8 }),
+      this.contextEngine.getAssignedIssues({ limit: 8 })
+    ]);
+    const items = [...reviews, ...issues].slice(0, 12);
+    if (!items.length) return { text: 'No open assigned issues or review requests were returned by connected GitHub/GitLab read-only sources.', route: 'context:development' };
+    return { text: items.map((item) => `${item.type}: ${item.title} (${sourceLabel(item)})${item.url ? `\n${item.url}` : ''}`).join('\n'), route: 'context:development' };
   }
 
   async answerWithWorkspaceTools(userText, toolSpecs, events) {
@@ -413,13 +516,54 @@ export class EdithAgentCore {
       `Agents: ${agents.join('; ') || 'unknown'}`,
       `Providers: ${providers.join('; ') || 'unknown'}`,
       'Workspace permissions: read/search/git status/git diff only; no native write or shell execution.',
-      'Network permissions: public HTTP/HTTPS fetch only; localhost/private network/file URLs blocked.'
+      'Network permissions: public HTTP/HTTPS fetch only; localhost/private network/file URLs blocked.',
+      this.contextCapabilityManifest()
+    ].join('\n');
+  }
+
+  contextCapabilityManifest() {
+    const rows = this.contextStatusRows ?? [];
+    const available = rows.filter((row) => row.health === ConnectorHealth.CONNECTED).map((row) => `${row.sourceType}.read`);
+    const unavailable = rows.filter((row) => row.health !== ConnectorHealth.CONNECTED).map((row) => `${row.sourceType}.read - ${row.health}`);
+    return [
+      `Personal context AVAILABLE: ${available.join(', ') || 'none'}`,
+      `Personal context UNAVAILABLE: ${unavailable.join(', ') || 'none'}`,
+      'Personal context permissions: read-only; email/calendar/task/GitHub/GitLab mutations unavailable; keep personal context local unless explicitly approved.'
     ].join('\n');
   }
 
   pruneHistory() {
     if (this.history.length > MAX_MESSAGES) this.history = this.history.slice(-MAX_MESSAGES);
   }
+}
+
+function isMutationRequest(lower) {
+  return /\b(move|reschedule|cancel|create|update|delete|send|reply|archive|label|complete|merge|push)\b/.test(lower)
+    && /\b(meeting|event|calendar|email|mail|message|task|issue|pr|pull request|mr|merge request|github|gitlab)\b/.test(lower);
+}
+
+function formatContextStatus(rows) {
+  return rows.map((row) => {
+    const source = row.accountIdentity ? `${row.name} (${row.accountIdentity})` : row.name;
+    return `${source}: ${row.health}; read-only=${row.readOnly ? 'yes' : 'no'}; capabilities=${row.capabilities.join(', ')}; ${row.detail}`;
+  }).join('\n');
+}
+
+function sourceUnavailableText(rows, name) {
+  const row = rows.find((item) => item.name === name);
+  if (!row || row.health === ConnectorHealth.CONNECTED) return '';
+  return `${name} context is ${row.health}: ${row.detail}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return '(time unavailable)';
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+    day: 'numeric'
+  }).format(new Date(value));
 }
 
 function parseModelArg(value) {

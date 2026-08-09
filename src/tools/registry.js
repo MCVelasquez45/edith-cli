@@ -63,6 +63,18 @@ export function createDefaultToolRegistry() {
     permissions: ['network', 'official-source-preferred'],
     availability: 'AVAILABLE'
   });
+  for (const id of ['context_status', 'context_events', 'context_next_event', 'context_unread_email', 'context_email_search', 'context_tasks', 'context_github', 'context_gitlab', 'context_brief']) {
+    registry.register({
+      id,
+      name: id,
+      description: contextToolDescription(id),
+      source: 'edith-context',
+      inputSchema: contextToolSchema(id),
+      risk: Risk.EXTERNAL_SERVICE,
+      permissions: ['read-only', 'bounded-results', 'local-first-synthesis'],
+      availability: 'AVAILABLE'
+    });
+  }
   return registry;
 }
 
@@ -86,4 +98,25 @@ function nativeToolSchema(id) {
   if (id === 'search_files') return { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] };
   if (id === 'list_directory') return { type: 'object', properties: { path: { type: 'string' } } };
   return { type: 'object', properties: {} };
+}
+
+function contextToolDescription(id) {
+  return {
+    context_status: 'Show read-only personal-context connector status.',
+    context_events: 'Read normalized calendar events from configured read-only connectors.',
+    context_next_event: 'Read the next calendar event from configured read-only connectors.',
+    context_unread_email: 'Read bounded unread email metadata from configured read-only connectors.',
+    context_email_search: 'Search bounded email metadata from configured read-only connectors.',
+    context_tasks: 'Read normalized tasks from configured read-only connectors.',
+    context_github: 'Read GitHub issues, pull requests, and notifications through the authenticated gh CLI.',
+    context_gitlab: 'Read GitLab issues and merge requests through the authenticated glab CLI.',
+    context_brief: 'Build an on-demand read-only personal briefing from normalized context.'
+  }[id];
+}
+
+function contextToolSchema(id) {
+  if (id === 'context_email_search') return { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] };
+  if (id === 'context_events') return { type: 'object', properties: { range: { type: 'string' }, limit: { type: 'number' } } };
+  if (id === 'context_brief') return { type: 'object', properties: { mode: { type: 'string', enum: ['brief', 'updated', 'end_of_day'] } } };
+  return { type: 'object', properties: { limit: { type: 'number' } } };
 }

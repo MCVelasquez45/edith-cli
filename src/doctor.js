@@ -5,6 +5,7 @@ import { AgentRegistry } from './agents/registry.js';
 import { EdithMcpClient } from './mcp/client.js';
 import { McpRegistry } from './mcp/registry.js';
 import { createDefaultToolRegistry } from './tools/registry.js';
+import { ContextConnectorRegistry } from './context/registry.js';
 
 export async function runDoctor({ cwd, ui }) {
   ui.section('EDITH Doctor');
@@ -51,6 +52,12 @@ export async function runDoctor({ cwd, ui }) {
   const networkTools = tools.filter((tool) => ['web_search', 'web_fetch', 'docs_lookup'].includes(tool.id));
   const configuredNetworkTools = networkTools.filter((tool) => tool.availability === 'AVAILABLE').length;
   ui.line(`${configuredNetworkTools ? 'OK' : 'WARN'} Web/documentation tools: ${configuredNetworkTools}/${networkTools.length} backend(s) configured`);
+  const contextRows = await new ContextConnectorRegistry({ cwd }).status({ refresh: true });
+  for (const row of contextRows) {
+    ui.line(`${row.health === 'CONNECTED' ? 'OK' : 'WARN'} Context ${row.name}: ${row.health}; read-only=${row.readOnly ? 'yes' : 'no'}; ${row.detail}`);
+  }
+  const mutationTools = tools.filter((tool) => /sendEmail|deleteEmail|createEvent|updateEvent|deleteEvent|createTask|updateTask|mergePR|mergeMR|createIssue/i.test(tool.id));
+  ui.line(`${mutationTools.length ? 'FAIL' : 'OK'} Personal-context mutation tools: ${mutationTools.length ? mutationTools.map((tool) => tool.id).join(', ') : 'none exposed'}`);
   ui.line('OK Audit events: MCP sessions and tool calls are written with secret redaction');
 
   const lmBind = spawnSync('lsof', ['-nP', '-iTCP:1234', '-sTCP:LISTEN'], { encoding: 'utf8' });

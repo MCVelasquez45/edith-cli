@@ -11,6 +11,7 @@ import { McpRegistry } from './mcp/registry.js';
 import { serveEdithMcpStdio } from './mcp/server.js';
 import { createDefaultToolRegistry } from './tools/registry.js';
 import { runNativeEdith } from './native/interactive-cli.js';
+import { ContextConnectorRegistry } from './context/registry.js';
 
 const VERSION = '0.1.0';
 const DEFAULT_CODE_MODEL = process.env.EDITH_CODE_MODEL ?? 'lmstudio-local/qwen/qwen3-vl-4b';
@@ -29,6 +30,7 @@ export async function main(args) {
   if (command === 'chat') return runChat(args.slice(1), cwd, ui);
   if (command === 'ask') return runAsk(args.slice(1), cwd, ui);
   if (command === 'agents') return printAgents();
+  if (command === 'context') return runContext(args.slice(1), cwd);
   if (command === 'mcp') return runMcp(args.slice(1), ui);
   if (command === 'tools') return runTools(args.slice(1));
 
@@ -51,6 +53,7 @@ Usage:
   edith models          List live local model inventory
   edith providers       List local provider health
   edith agents          List available coding agents
+  edith context status  Show read-only personal context connector status
   edith ask local       Ask the default local model
   edith ask claude      Delegate a prompt to Claude Code
   edith ask codex       Delegate a prompt to Codex
@@ -118,6 +121,20 @@ async function printAgents() {
     console.log(`  integration: ${agent.integrationType}`);
     console.log(`  capabilities: ${agent.capabilities.join(', ')}`);
     console.log(`  detail: ${agent.detail}`);
+  }
+}
+
+async function runContext(args, cwd) {
+  const sub = args[0] ?? 'status';
+  if (sub !== 'status') throw new Error(`Unknown context command: ${sub}`);
+  const registry = new ContextConnectorRegistry({ cwd });
+  for (const row of await registry.status({ refresh: true })) {
+    console.log(`${row.health === 'CONNECTED' ? 'OK' : 'WARN'} ${row.name}`);
+    console.log(`  source: ${row.sourceType}`);
+    console.log(`  account: ${row.accountIdentity ?? '(none)'}`);
+    console.log(`  read-only: ${row.readOnly ? 'yes' : 'no'}`);
+    console.log(`  capabilities: ${row.capabilities.join(', ')}`);
+    console.log(`  detail: ${row.detail}`);
   }
 }
 
