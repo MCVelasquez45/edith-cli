@@ -1,9 +1,10 @@
 import { OllamaProvider } from './ollama.js';
 import { LMStudioProvider } from './lm-studio.js';
+import { NvidiaProvider } from './nvidia.js';
 
 export async function createProviderRouter({ ui }) {
   const router = new ProviderRouter({
-    providers: [new LMStudioProvider(), new OllamaProvider()],
+    providers: [new LMStudioProvider(), new OllamaProvider(), new NvidiaProvider()],
     ui
   });
   await router.refresh();
@@ -93,5 +94,5 @@ export class ProviderRouter {
 }
 
 function isUsableModel(model) {
-  return !model.capabilities?.includes('EMBEDDING') && (!model.state || model.state === 'loaded' || model.state === 'unknown');
+  return !model.capabilities?.includes('EMBEDDING') && (!model.state || model.state === 'loaded' || model.state === 'unknown' || model.state === 'remote');
 }

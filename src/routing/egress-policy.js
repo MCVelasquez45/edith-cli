@@ -1,0 +1,23 @@
+import { DataClass, isPublicOnly } from './request-analysis.js';
+import { redact } from '../audit.js';
+
+export const DEFAULT_PROCESSING_MODE = 'local-first';
+
+export function egressDecision({ dataClasses = [], processor, mode = DEFAULT_PROCESSING_MODE } = {}) {
+  if (!processor) return { allowed: false, reason: 'no eligible processor', sanitized: false };
+  const location = processor?.location ?? 'LOCAL';
+  if (dataClasses.includes(DataClass.SECRET)) return { allowed: false, reason: 'SECRET data cannot leave the machine', sanitized: false };
+  if (location === 'LOCAL') return { allowed: true, reason: 'local processor', sanitized: false };
+  if (!isPublicOnly(dataClasses)) return { allowed: false, reason: 'external processing requires PUBLIC-only input', sanitized: false };
+  if (mode === 'local-first' && processor?.id !== 'nvidia:z-ai/glm-5.2') return { allowed: false, reason: 'local-first policy', sanitized: false };
+  return { allowed: true, reason: 'PUBLIC-only input permitted by policy', sanitized: true };
+}
+
+export function sanitizeExternalPayload(value) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  const redacted = redact(text)
+    .replace(/(api[_-]?key|access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|password|credential|secret)\s*[:=]\s*[^\s,;}]+/gi, '$1=<REDACTED>')
+    .replace(/(authorization|cookie)\s*[:=]\s*[^\n]+/gi, '$1=<REDACTED>')
+    .replace(/\b(EDITH|NVIDIA|OPENAI|ANTHROPIC|GOOGLE)_[A-Z0-9_]+\s*=\s*[^\s]+/g, '$1_<REDACTED>');
+  return typeof value === 'string' ? redacted : JSON.parse(redacted);
+}

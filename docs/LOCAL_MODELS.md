@@ -1,6 +1,6 @@
 # Local Models
 
-EDITH treats local inference providers as runtime dependencies.
+EDITH treats inference providers as runtime dependencies.
 
 ## Providers
 
@@ -11,6 +11,10 @@ LM Studio is used through its local OpenAI-compatible API. EDITH discovers model
 ### Ollama
 
 Ollama is used through the local Ollama API. Installed models are discovered dynamically.
+
+### NVIDIA NIM
+
+NVIDIA NIM is used through NVIDIA's OpenAI-compatible API when `NVIDIA_API_KEY` is available in the environment. EDITH discovers `/v1/models` when possible and otherwise shows a small built-in fallback catalog of known NVIDIA-hosted chat models.
 
 ## Model Roles
 
@@ -34,6 +38,12 @@ edith chat --model <provider:model-id>
 edith --model <provider:model-id>
 ```
 
+Example:
+
+```bash
+edith chat --model nvidia:z-ai/glm-5.2
+```
+
 ## Verification
 
 Provider reachability is not the same as model usability. Use:
@@ -44,4 +54,3 @@ edith
 ```
 
 Then ask for a visible response through the native TUI.
-

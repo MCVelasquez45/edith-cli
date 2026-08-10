@@ -26,6 +26,8 @@ export async function runDoctor({ cwd, ui }) {
   for (const item of await router.health()) {
     ui.line(`${item.ok ? 'OK' : 'FAIL'} ${item.name}: ${item.detail}`);
   }
+  ui.line('OK Hybrid routing: request classification, centralized egress policy, and local-first synthesis enabled');
+  ui.line(`${process.env.NVIDIA_API_KEY ? 'OK' : 'WARN'} NVIDIA processing: ${process.env.NVIDIA_API_KEY ? 'configured for public-only external processing' : 'not configured; local fallback available'}`);
   const models = await router.listModels();
   for (const group of models) {
     const chat = group.models.filter((model) => model.capabilities?.includes('CHAT')).length;

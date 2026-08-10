@@ -37,8 +37,8 @@ Session commands:
 
 ```text
 /help       Show session commands
-/model      Show or switch local model
-/models     List live local models
+/model      Show or switch model
+/models     List live models
 /agents     Show specialist agents
 /agent      Show or pin routing mode
 /tools      Show approved tools
@@ -68,14 +68,14 @@ edith code --model <provider/model>
 
 Launches OpenCode as the specialist coding TUI.
 
-## Local Chat
+## Chat
 
 ```bash
 edith chat
 edith chat --model <provider:model-id>
 ```
 
-Starts direct local streaming chat without the full EDITH agent loop.
+Starts direct streaming chat without the full EDITH agent loop.
 
 ## Inventory
 

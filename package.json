@@ -1,7 +1,7 @@
 {
   "name": "edith-cli",
   "version": "0.1.0",
-  "description": "EDITH local coding-agent terminal for Ollama and LM Studio",
+  "description": "EDITH coding-agent terminal for LM Studio, Ollama, and NVIDIA NIM",
   "type": "module",
   "bin": {
     "edith": "./bin/edith.js"

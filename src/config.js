@@ -21,6 +21,9 @@ export function defaultConfig() {
       localChatProvider: 'lm-studio',
       localChatModel: 'qwen/qwen3-vl-4b'
     },
+    processing: {
+      mode: process.env.EDITH_PROCESSING_MODE ?? 'local-first'
+    },
     mcp: {
       servers: {
         self: {

@@ -8,6 +8,8 @@ Local-first AI orchestration from one terminal.
 
 EDITH is a provider-agnostic terminal agent for coordinating local language models, specialist coding agents, MCP tools, web research, personal context, and Google Workspace from a single native CLI.
 
+Hybrid processing is documented in [docs/HYBRID_PROCESSING.md](docs/HYBRID_PROCESSING.md). EDITH classifies requests and data before selecting local models, NVIDIA NIM, specialist agents, or retrieval tools. Personal, sensitive, and secret data remain behind the local egress boundary by default.
+
 ## Overview
 
 EDITH runs locally on macOS and exposes a conversational terminal interface through `edith`. It discovers local model providers, routes work to the right local or specialist agent, applies security policy before tools run, and keeps personal context local by default.
@@ -35,6 +37,7 @@ flowchart TD
     Core --> Models[Local Models]
     Models --> LM[LM Studio]
     Models --> Ollama[Ollama]
+    Models --> NVIDIA[NVIDIA NIM]
 
     Core --> Agents[Specialist Agents]
     Agents --> OpenCode[OpenCode]
@@ -71,7 +74,7 @@ Security boundaries include macOS Keychain storage, action confirmation, workspa
 ## Features
 
 - Native conversational terminal UI via `edith`
-- Local model discovery and streaming through LM Studio and Ollama
+- Model discovery and streaming through LM Studio, Ollama, and optional NVIDIA NIM
 - Dedicated coding mode via `edith code` and OpenCode
 - Delegation to Codex, Claude Code, and OpenCode
 - MCP client/server foundation with allowlisted tools
@@ -160,6 +163,7 @@ EDITH discovers live models from:
 
 - LM Studio at the configured local OpenAI-compatible endpoint
 - Ollama at the local Ollama API endpoint
+- NVIDIA NIM at the configured OpenAI-compatible endpoint when `NVIDIA_API_KEY` is set
 
 Embedding models are not presented as normal chat models. Capability labels are runtime-derived where EDITH can verify them.
 

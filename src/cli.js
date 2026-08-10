@@ -53,10 +53,10 @@ Usage:
   edith --model <provider:model>
   edith code            Launch OpenCode with EDITH's verified local coding model
   edith code --model <provider/model>
-  edith chat            Start direct local streaming chat
+  edith chat            Start direct streaming chat
   edith chat --model <provider:model-id>
-  edith models          List live local model inventory
-  edith providers       List local provider health
+  edith models          List live model inventory
+  edith providers       List provider health
   edith agents          List available coding agents
   edith auth google --profile personal --scope calendar
                          Connect Google Workspace with local OAuth
@@ -438,7 +438,7 @@ function selectChatModel(router, modelArg) {
   }
   const preferred = router.findModel('lm-studio', 'qwen/qwen3-vl-4b');
   if (preferred) return preferred;
-  for (const group of router.modelGroups) {
+  for (const group of router.modelGroups.filter((item) => item.providerId === 'lm-studio' || item.providerId === 'ollama')) {
     const model = group.models.find((item) => item.capabilities?.includes('CHAT'));
     if (model) return { providerId: group.providerId, model };
   }

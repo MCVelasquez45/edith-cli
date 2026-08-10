@@ -22,7 +22,7 @@ export function createEdithMcpServer() {
     'list_local_models',
     {
       title: 'List Local Models',
-      description: 'List live LM Studio and Ollama model inventory.',
+      description: 'List live EDITH model inventory.',
       inputSchema: z.object({})
     },
     async () => {
@@ -45,7 +45,10 @@ export function createEdithMcpServer() {
     async ({ prompt }) => {
       const router = await createProviderRouter({ ui: null });
       const preferred = router.findModel('lm-studio', 'qwen/qwen3-vl-4b')
-        ?? router.modelGroups.flatMap((group) => group.models.map((model) => ({ providerId: group.providerId, model }))).find((item) => item.model.capabilities?.includes('CHAT'));
+        ?? router.modelGroups
+          .filter((group) => group.providerId === 'lm-studio' || group.providerId === 'ollama')
+          .flatMap((group) => group.models.map((model) => ({ providerId: group.providerId, model })))
+          .find((item) => item.model.capabilities?.includes('CHAT'));
       if (!preferred) throw new Error('No local chat model available');
       router.setCurrent(preferred.providerId, preferred.model.id);
       let text = '';

@@ -217,7 +217,7 @@ function printSessionHelp(ui) {
   ui.section('Session Commands');
   ui.line('/help                 Show commands');
   ui.line('/model [provider:id]  Show or switch model');
-  ui.line('/models               List live local models');
+  ui.line('/models               List live models');
   ui.line('/agents               Show specialist agents');
   ui.line('/agent [name]         Pin routing: auto, claude, codex, opencode, local');
   ui.line('/tasks                Show session task activity');

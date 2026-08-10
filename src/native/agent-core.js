@@ -12,6 +12,12 @@ import { ConnectorHealth, sourceLabel } from '../context/models.js';
 import { AuthRegistry } from '../auth/registry.js';
 import { AuthState } from '../auth/errors.js';
 import { classifySearchMode } from '../network/providers.js';
+import { AuditLog } from '../audit.js';
+import { buildProcessorRegistry } from '../routing/processor-registry.js';
+import { createExecutionPlan } from '../routing/planner.js';
+import { sanitizeExternalPayload } from '../routing/egress-policy.js';
+import { DataClass, classifyData } from '../routing/request-analysis.js';
+import { egressDecision } from '../routing/egress-policy.js';
 
 const MAX_MESSAGES = 24;
 const MAX_TOOL_CONTEXT = 18000;
@@ -37,14 +43,20 @@ export class EdithAgentCore {
     this.lastPersonalContextItems = [];
     this.lastNetworkItems = [];
     this.lastWeatherLocation = null;
+    this.audit = new AuditLog();
+    this.processingMode = 'local-first';
+    this.processors = [];
+    this.currentPlan = null;
   }
 
   async initialize({ modelArg = null } = {}) {
     this.config = await loadConfig(this.cwd);
+    this.processingMode = this.config.processing?.mode ?? 'local-first';
     this.workspaceInfo = await detectWorkspace(this.cwd);
     this.workspaceTools = new WorkspaceTools({ workspace: this.workspaceInfo.workspace });
     this.router = await createProviderRouter({ ui: this.ui });
     this.agentHealth = await this.agentRegistry.list();
+    this.processors = buildProcessorRegistry({ router: this.router, agents: this.agentHealth });
     this.contextStatusRows = await this.contextRegistry.status({ refresh: true });
     this.authStatusRows = await this.authRegistry.status();
     const configured = parseModelArg(modelArg) ?? {
@@ -66,7 +78,9 @@ export class EdithAgentCore {
       branch: this.workspaceInfo.branch,
       toolsReady: this.toolRegistry.list().filter((tool) => tool.availability === 'AVAILABLE').length,
       webReady: this.toolRegistry.get('web_search')?.availability === 'AVAILABLE',
-      contextReady: this.contextStatusRows.filter((row) => row.health === ConnectorHealth.CONNECTED).length
+      contextReady: this.contextStatusRows.filter((row) => row.health === ConnectorHealth.CONNECTED).length,
+      processingMode: this.processingMode,
+      processorCount: this.processors.length
     };
   }
 
@@ -108,7 +122,25 @@ export class EdithAgentCore {
     this.pruneHistory();
 
     const plan = events.routeOverride ? { route: events.routeOverride, reason: 'explicit routing mode' } : this.route(userText);
-    this.trace = [{ type: 'route', route: plan.route, reason: plan.reason }];
+    const executionPlan = createExecutionPlan({
+      request: userText,
+      route: plan.route,
+      router: this.router,
+      agents: this.agentHealth,
+      mode: this.processingMode,
+      explicitProcessor: events.routeOverride === 'local' ? 'local' : null
+    });
+    this.currentPlan = executionPlan;
+    this.trace = [{ type: 'route', route: plan.route, reason: plan.reason, dataClasses: executionPlan.dataClasses, processor: executionPlan.processor, finalProcessor: executionPlan.finalProcessor, egress: executionPlan.egress.reason, externalEgress: executionPlan.externalEgress.reason }];
+    await this.audit.record({
+      type: 'processor_selected',
+      route: plan.route,
+      processor: executionPlan.processor,
+      finalProcessor: executionPlan.finalProcessor,
+      dataClassification: executionPlan.dataClasses,
+      egressAllowed: executionPlan.egress.allowed,
+      egressReason: executionPlan.egress.reason
+    }).catch(() => {});
     let result;
     try {
       result = await this.executePlan(plan, userText, events);
@@ -133,6 +165,9 @@ export class EdithAgentCore {
       return { route: 'live:requires-tool', reason: 'explicit request to avoid live retrieval for stale weather data' };
     }
     if (isMutationRequest(lower)) return { route: 'context:mutation-blocked', reason: 'read-only personal context phase' };
+    if (/\b(research|latest|current|developments|news)\b/.test(lower) && /\b(calendar|meeting|today|working on)\b/.test(lower)) {
+      return { route: 'hybrid:research-context', reason: 'public research plus personal context requires split processing' };
+    }
     if (/\b(personal context|context can you access|context status)\b/.test(lower)) return { route: 'context:status', reason: 'personal context status request' };
     if (/\b(give me (my |an )?brief|updated brief|daily brief)\b/.test(lower)) {
       return { route: lower.includes('updated') ? 'context:brief-updated' : 'context:brief', reason: 'on-demand briefing request' };
@@ -203,6 +238,7 @@ export class EdithAgentCore {
     if (plan.route === 'live:requires-tool') return this.answerLiveRequiresTool(events);
     if (plan.route === 'network:weather') return this.answerWeather(userText, events);
     if (plan.route === 'network:search') return this.answerNetworkSearch(userText, events);
+    if (plan.route === 'hybrid:research-context') return this.answerHybridResearchContext(userText, events);
     if (plan.route === 'network:docs') return this.answerDocsLookup(userText, events);
     if (plan.route === 'network:fetch') return this.answerUrlFetch(userText, events);
     if (plan.route === 'network:fetch-last') return this.answerLastSourceFetch(userText, events);
@@ -556,10 +592,17 @@ export class EdithAgentCore {
   async delegate(agentId, userText, events) {
     const agent = this.agentRegistry.get(agentId);
     if (!agent) throw new Error(`Unknown agent: ${agentId}`);
-    const prompt = buildDelegationPrompt(userText, this.history);
+    const dataClasses = classifyData({ request: `${userText}\n${this.history.slice(-4).map((item) => item.content).join('\n')}` });
+    const decision = egressDecision({ dataClasses, processor: { id: agentId, location: 'EXTERNAL' }, mode: this.processingMode });
+    if (dataClasses.includes(DataClass.SECRET) || dataClasses.includes(DataClass.PERSONAL) || dataClasses.includes(DataClass.SENSITIVE)) {
+      this.trace.push({ type: 'policy', title: 'Specialist delegation blocked', agent: agentId, dataClasses, egress: decision.reason });
+      return { text: `I did not delegate this request to ${agent.name} because its context is not approved for external processing.`, route: `agent:${agentId}` };
+    }
+    const prompt = sanitizeExternalPayload(buildDelegationPrompt(userText, this.history));
     const label = agentId === 'opencode' ? 'Running OpenCode coding agent' : `Asking ${agent.name}`;
     events.activity?.(label);
-    this.trace.push({ type: 'agent', agent: agentId, title: label });
+    this.trace.push({ type: 'agent', agent: agentId, title: label, dataClasses, egress: 'allowed for explicit specialist delegation', sanitizationApplied: true });
+    await this.audit.record({ type: 'agent_delegation', agent: agentId, dataClassification: dataClasses, egressAllowed: true, sanitizationApplied: true, payloadSize: prompt.length }).catch(() => {});
     try {
       const result = await agent.sendTask(prompt, {
         cwd: this.workspaceInfo.workspace,
@@ -596,6 +639,40 @@ export class EdithAgentCore {
       return this.synthesizeNetworkAnswer(userText, fetched, events, 'network:search');
     } catch (error) {
       return { text: `EDITH could not retrieve current information: ${humanNetworkError(error)}`, route: 'network:search', error };
+    }
+  }
+
+  async answerHybridResearchContext(userText, events) {
+    events.activity?.('Searching public research');
+    this.trace.push({ type: 'tool', tool: 'web_search', title: 'Searching public research', dataClassification: DataClass.PUBLIC });
+    try {
+      const mode = classifySearchMode(userText);
+      const results = await this.network.search({ query: userText, maxResults: 5, mode });
+      const fetched = [];
+      for (const result of results.slice(0, 3)) {
+        try {
+          fetched.push({ result, page: await this.network.fetch({ url: result.url }) });
+        } catch {
+          // Keep the bounded public corpus to sources EDITH could read.
+        }
+      }
+      const publicSummary = fetched.length
+        ? await this.synthesizeNetworkAnswer(userText, fetched, events, 'hybrid:public-research')
+        : { text: `Public research returned no readable pages. Sources:\n${formatSources(results)}` };
+      events.activity?.('Checking calendar');
+      this.trace.push({ type: 'tool', tool: 'context_events', title: 'Checking calendar', dataClassification: DataClass.PERSONAL });
+      const eventsToday = await this.contextEngine.getEventsAfter();
+      const calendar = eventsToday.slice(0, 8).map((event) => `${formatDateTime(event.startAt)} - ${event.title}`).join('\n') || 'No upcoming calendar events were returned.';
+      const prompt = [
+        `User request: ${userText}`,
+        'Synthesize the public research with the private calendar context locally. Never send calendar details to an external processor.',
+        `Public research summary:\n${publicSummary.text}`,
+        `Private calendar context:\n${calendar}`
+      ].join('\n\n');
+      const result = await this.answerLocal(prompt, calendar, events, { route: 'hybrid:research-context', maxTokens: 1000 });
+      return { ...result, route: 'hybrid:research-context' };
+    } catch (error) {
+      return { text: `EDITH could not complete the hybrid research request: ${humanNetworkError(error)}`, route: 'hybrid:research-context', error };
     }
   }
 
@@ -690,10 +767,45 @@ export class EdithAgentCore {
       '',
       `Sources to cite:\n${sources}`
     ].join('\n');
-    const answer = await this.answerLocal(prompt, context, events, { route, maxTokens: 1000 });
+    const publicSubstep = route === 'hybrid:public-research';
+    const canUseExternal = this.currentPlan?.processor?.startsWith('nvidia:')
+      && (this.currentPlan.egress?.allowed || this.currentPlan.publicResearchEgress?.allowed || publicSubstep)
+      && (publicSubstep || this.currentPlan.dataClasses?.every((item) => item === DataClass.PUBLIC));
+    const answer = canUseExternal
+      ? await this.answerPublicWithNvidia(prompt, context, events, route)
+      : await this.answerLocal(prompt, context, events, { route, maxTokens: 1000 });
     const text = `${answer.text}\n\nSources:\n${sources}`;
     if (answer.streamed) events.streamChunk?.(`\n\nSources:\n${sources}`);
     return { ...answer, text, route };
+  }
+
+  async answerPublicWithNvidia(prompt, context, events, route) {
+    const group = this.router.modelGroups.find((item) => item.providerId === 'nvidia');
+    const model = group?.models.find((item) => item.id === 'z-ai/glm-5.2') ?? group?.models.find((item) => item.capabilities?.includes('CHAT'));
+    if (!group || !model) return this.answerLocal(prompt, context, events, { route, maxTokens: 1000 });
+    events.activity?.('Analyzing public research · NVIDIA');
+    this.trace.push({ type: 'processor', processor: 'nvidia:z-ai/glm-5.2', dataClassification: [DataClass.PUBLIC], egress: 'allowed' });
+    await this.audit.record({ type: 'external_processing', processor: 'nvidia:z-ai/glm-5.2', dataClassification: [DataClass.PUBLIC], egressAllowed: true, sanitizationApplied: true, payloadSize: sanitizeExternalPayload(context).length }).catch(() => {});
+    const messages = [
+      { role: 'system', content: 'Analyze only the public research supplied. Do not invent facts or citations.' },
+      { role: 'user', content: sanitizeExternalPayload(prompt) }
+    ];
+    let text = '';
+    events.streamStart?.('NVIDIA · z-ai/glm-5.2');
+    try {
+      for await (const chunk of await group.provider.streamChat({ model: model.id, messages, maxTokens: 1000 })) {
+        if (events.signal?.aborted) break;
+        text += chunk;
+        events.streamChunk?.(chunk);
+      }
+      events.streamEnd?.();
+      return { text: text.trim(), route, streamed: true };
+    } catch (error) {
+      events.streamEnd?.();
+      this.trace.push({ type: 'processor_error', processor: 'nvidia:z-ai/glm-5.2', error: error.message });
+      events.activityError?.('NVIDIA unavailable; continuing locally');
+      return this.answerLocal(prompt, context, events, { route, maxTokens: 1000 });
+    }
   }
 
   async liveAgentStatus() {
@@ -1004,10 +1116,10 @@ function extractQuotedOrNamedEvent(text) {
 
 function parseModelArg(value) {
   if (!value) return null;
-  const colon = value.indexOf(':');
-  if (colon >= 0) return { providerId: value.slice(0, colon), modelId: value.slice(colon + 1) };
   const slash = value.indexOf('/');
   if (slash > 0 && value.startsWith('ollama/')) return { providerId: 'ollama', modelId: value.slice('ollama/'.length) };
+  const colon = value.indexOf(':');
+  if (colon >= 0) return { providerId: value.slice(0, colon), modelId: value.slice(colon + 1) };
   return null;
 }
 

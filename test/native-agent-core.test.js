@@ -64,6 +64,16 @@ describe('native agent routing', () => {
     assert.equal(core.route('Ask Codex to inspect this repository and report risk.').route, 'agent:codex');
   });
 
+  it('blocks specialist delegation for secret-bearing context', async () => {
+    const core = new EdithAgentCore();
+    let called = false;
+    core.agentRegistry = { get: () => ({ name: 'Codex', sendTask: async () => { called = true; } }) };
+    const result = await core.delegate('codex', 'Inspect this OAuth token=fake-oauth-token', {});
+    assert.equal(called, false);
+    assert.match(result.text, /not approved for external processing/i);
+    assert.doesNotMatch(result.text, /fake-oauth-token/);
+  });
+
   it('routes live system and environment requests to tools', () => {
     const core = new EdithAgentCore();
 
