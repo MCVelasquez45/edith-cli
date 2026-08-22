@@ -1,89 +1,118 @@
+// `edith doctor` — product diagnostics for the TrueForge-backed EDITH stack.
+// Every failing check comes with a concrete remediation.
+
 import fs from 'node:fs/promises';
+import process from 'node:process';
 import { spawnSync } from 'node:child_process';
-import { createProviderRouter } from './providers/index.js';
+import { colors } from './ui/terminal.js';
+import { RuntimeSupervisor } from './runtime/supervisor.js';
+import { discoverLocalProviders, OLLAMA_BASE, LMSTUDIO_BASE } from './runtime/models.js';
+import { describeWorkspace } from './workspace/workspace.js';
+import { discoverSkills } from './skills/registry.js';
+import { buildToolset } from './capability/toolset.js';
+import { SessionStore } from './sessions/store.js';
+import { runtimeDbPath, edithDataDir } from './runtime/paths.js';
 import { AgentRegistry } from './agents/registry.js';
-import { EdithMcpClient } from './mcp/client.js';
-import { McpRegistry } from './mcp/registry.js';
-import { createDefaultToolRegistry } from './tools/registry.js';
-import { ContextConnectorRegistry } from './context/registry.js';
 import { AuthRegistry } from './auth/registry.js';
-import { NetworkRegistry } from './network/providers.js';
-import { defaultConfig } from './config.js';
 
 export async function runDoctor({ cwd, ui }) {
-  ui.section('EDITH Doctor');
-  const edith = spawnSync('which', ['edith'], { encoding: 'utf8' });
-  ui.line(`${edith.status === 0 ? 'OK' : 'WARN'} CLI: ${edith.stdout.trim() || 'edith not found in PATH'}`);
-  const opencodePath = spawnSync('which', ['opencode'], { encoding: 'utf8' });
-  const opencodeVersion = spawnSync('opencode', ['--version'], { encoding: 'utf8' });
-  ui.line(`${opencodePath.status === 0 ? 'OK' : 'FAIL'} OpenCode: ${(opencodePath.stdout || '').trim() || 'not found'} ${(opencodeVersion.stdout || '').trim()}`);
-  ui.line(`OK Workspace: ${cwd}`);
-  await fs.access(cwd, fs.constants?.W_OK ?? 2).then(
-    () => ui.line('OK Workspace writable'),
-    () => ui.warn('Workspace is not writable')
+  ui.line(colors.bold('\nEDITH Doctor\n'));
+  const issues = [];
+  const ok = (label, detail = '') => ui.line(`${colors.green('✓')} ${label}${detail ? colors.dim(` — ${detail}`) : ''}`);
+  const warn = (label, remedy = '') => { ui.line(`${colors.yellow('⚠')} ${label}${remedy ? colors.dim(`\n    fix: ${remedy}`) : ''}`); };
+  const fail = (label, remedy = '') => {
+    issues.push(label);
+    ui.line(`${colors.red('✗')} ${label}${remedy ? colors.dim(`\n    fix: ${remedy}`) : ''}`);
+  };
+
+  // Node + install
+  const nodeMajor = Number(process.versions.node.split('.')[0]);
+  if (nodeMajor >= 22) ok(`Node ${process.versions.node}`);
+  else fail(`Node ${process.versions.node} is too old`, 'install Node 22 or newer');
+
+  // TrueForge runtime
+  const supervisor = new RuntimeSupervisor();
+  try {
+    const cliPath = await supervisor.resolveCliPath();
+    ok('TrueForge runtime installed', cliPath.replace(process.env.HOME ?? '', '~'));
+  } catch (error) {
+    fail('TrueForge runtime not found', 'run `npm install` in the EDITH package, or set EDITH_TRUEFORGE_CLI');
+  }
+  const status = await supervisor.status();
+  if (status.running) ok('Runtime healthy', status.state.baseUrl);
+  else ui.line(`${colors.green('✓')} Runtime not running ${colors.dim('— starts automatically with `edith`')}`);
+
+  // Session database
+  try {
+    await fs.access(runtimeDbPath());
+    ok('Session database', runtimeDbPath().replace(process.env.HOME ?? '', '~'));
+  } catch {
+    ui.line(`${colors.green('✓')} Session database ${colors.dim('— created on first run')}`);
+  }
+
+  // Local model providers
+  const providers = await discoverLocalProviders();
+  const ollama = providers.find((provider) => provider.providerName === 'ollama-local');
+  const lmstudio = providers.find((provider) => provider.providerName === 'lmstudio-local');
+  if (ollama) {
+    ok(`Ollama (${ollama.models.length} model${ollama.models.length === 1 ? '' : 's'})`, ollama.models.map((model) => model.model_id).slice(0, 4).join(', '));
+    const toolCapable = ollama.models.filter((model) => model.toolCapable);
+    if (toolCapable.length) ok(`Tool-capable local model: ${toolCapable[0].model_id}`);
+    else warn('No tool-capable Ollama model', 'ollama pull qwen3:8b');
+  } else {
+    warn(`Ollama not reachable at ${OLLAMA_BASE}`, 'ollama serve  (then: ollama pull qwen3:8b)');
+  }
+  if (lmstudio) ok(`LM Studio (${lmstudio.models.length} model${lmstudio.models.length === 1 ? '' : 's'})`);
+  else warn(`LM Studio not running at ${LMSTUDIO_BASE}`, 'optional — start LM Studio and enable its local server');
+  if (!ollama && !lmstudio) fail('No local model provider available', 'EDITH is local-first and needs Ollama or LM Studio running');
+
+  // Cloud
+  if (process.env.NVIDIA_API_KEY) ok('Cloud provider configured', 'key injected at request time; never stored in runtime state');
+  else ui.line(`${colors.green('✓')} Cloud provider not configured ${colors.dim('— optional; EDITH is fully functional locally')}`);
+
+  // Workspace
+  const ws = await describeWorkspace(cwd);
+  ok(`Workspace: ${ws.name}`, `${ws.project.types.join(', ')}${ws.isGitRepo ? ` · branch ${ws.branch ?? '(detached)'}` : ' · no git'}`);
+  await fs.access(ws.root, fs.constants?.W_OK ?? 2).then(
+    () => ok('Workspace writable'),
+    () => fail('Workspace is not writable', `check permissions on ${ws.root}`)
   );
 
-  const router = await createProviderRouter({ ui });
-  for (const item of await router.health()) {
-    ui.line(`${item.ok ? 'OK' : 'FAIL'} ${item.name}: ${item.detail}`);
-  }
-  ui.line('OK Hybrid routing: request classification, centralized egress policy, and local-first synthesis enabled');
-  ui.line(`${process.env.NVIDIA_API_KEY ? 'OK' : 'WARN'} NVIDIA processing: ${process.env.NVIDIA_API_KEY ? 'configured for public-only external processing' : 'not configured; local fallback available'}`);
-  const models = await router.listModels();
-  for (const group of models) {
-    const chat = group.models.filter((model) => model.capabilities?.includes('CHAT')).length;
-    const tools = group.models.filter((model) => model.capabilities?.includes('TOOL_CALLING')).length;
-    ui.line(`OK ${group.providerName} models: ${group.models.length} (${chat} chat, ${tools} tool-capable hints)`);
-  }
-  const defaults = defaultConfig().defaults;
-  const defaultCoding = models.find((group) => group.providerName === 'LM Studio')?.models.find((model) => model.id === defaults.defaultCodingModel);
-  ui.line(`${defaultCoding ? 'OK' : 'FAIL'} Default coding model: ${defaults.codeModel}`);
+  // Tools + skills
+  const tools = buildToolset({ workspace: ws.root });
+  ok(`${tools.length} workspace tools`, 'read auto · write policy · destructive approval');
+  const skills = await discoverSkills({ workspace: ws.root });
+  if (skills.length) ok(`${skills.length} skill${skills.length === 1 ? '' : 's'}`, skills.map((skill) => skill.name).join(', '));
+  else warn('No skills discovered', 'reinstall EDITH or add skills under ~/.edith/skills');
 
-  const agents = await new AgentRegistry().list();
-  for (const agent of agents) {
-    ui.line(`${agent.available ? 'OK' : 'FAIL'} Agent ${agent.name}: ${agent.version || agent.detail}`);
+  // Sessions index
+  const sessions = await new SessionStore().list({ includeArchived: true }).catch(() => null);
+  if (sessions === null) fail('Session index unreadable', `inspect ${edithDataDir()}/sessions.json`);
+  else ok(`Session index (${sessions.length} session${sessions.length === 1 ? '' : 's'})`);
+
+  // Specialists
+  for (const agent of await new AgentRegistry().list()) {
+    if (agent.available) ok(`Specialist ${agent.name}`, agent.version || '');
+    else ui.line(`${colors.green('✓')} Specialist ${agent.name} not installed ${colors.dim('— optional')}`);
   }
 
-  const mcpRegistry = await McpRegistry.load();
-  const mcpClient = new EdithMcpClient({ registry: mcpRegistry });
-  const mcpStatus = await mcpClient.status();
-  for (const server of mcpStatus) {
-    ui.line(`${server.ok ? 'OK' : 'FAIL'} MCP ${server.id}: ${server.detail}`);
-  }
-  const enabledMcp = mcpRegistry.listServers().filter((server) => server.enabled);
-  ui.line(`OK MCP allowlist: ${enabledMcp.length} configured server(s); tools require explicit per-server allowlists`);
-  ui.line(`OK Timeouts: MCP server timeouts configured; agent subprocesses use bounded execution`);
-
-  const tools = createDefaultToolRegistry().list();
-  const networkTools = tools.filter((tool) => ['web_search', 'web_fetch', 'docs_lookup', 'weather'].includes(tool.id));
-  const configuredNetworkTools = networkTools.filter((tool) => tool.availability === 'AVAILABLE').length;
-  ui.line(`${configuredNetworkTools ? 'OK' : 'WARN'} Web/documentation tools: ${configuredNetworkTools}/${networkTools.length} backend(s) configured`);
-  const networkStatus = new NetworkRegistry().status();
-  const searchProviders = networkStatus.search.filter((provider) => provider.configured).map((provider) => provider.name).join(', ') || 'none';
-  ui.line(`${searchProviders === 'none' ? 'WARN' : 'OK'} General web search providers: ${searchProviders}`);
+  // Keychain-backed auth
   try {
-    const weather = await new NetworkRegistry().weather({ location: 'Mesa, Arizona', days: 1 });
-    ui.line(`OK Weather: ${networkStatus.weather.name}; verified for ${weather.location}`);
-  } catch (error) {
-    ui.line(`WARN Weather: ${networkStatus.weather.name}; configured but verification failed: ${error.message}`);
-  }
-  ui.line(`OK Web fetch security: public HTTP/HTTPS only; localhost/private/link-local/file URLs blocked`);
-  const contextRows = await new ContextConnectorRegistry({ cwd }).status({ refresh: true });
-  for (const row of contextRows) {
-    ui.line(`${row.health === 'CONNECTED' ? 'OK' : 'WARN'} Context ${row.name}: ${row.health}; read-only=${row.readOnly ? 'yes' : 'no'}; ${row.detail}`);
-  }
-  const mutationTools = tools.filter((tool) => /sendEmail|deleteEmail|createEvent|updateEvent|deleteEvent|createTask|updateTask|mergePR|mergeMR|createIssue/i.test(tool.id));
-  ui.line(`${mutationTools.length ? 'FAIL' : 'OK'} Personal-context mutation tools: ${mutationTools.length ? mutationTools.map((tool) => tool.id).join(', ') : 'none exposed'}`);
-  const authRows = await new AuthRegistry().status();
-  for (const row of authRows) {
-    const level = row.status === 'CONNECTED' ? 'OK' : row.status === 'ADMIN_APPROVAL_REQUIRED' ? 'WARN' : 'WARN';
-    ui.line(`${level} Auth ${row.name}: ${row.status}; account=${row.account ?? '(none)'}; token=${row.token}; ${row.detail}`);
-  }
-  ui.line('OK Audit events: MCP sessions and tool calls are written with secret redaction');
+    for (const row of await new AuthRegistry().status()) {
+      if (row.status === 'CONNECTED') ok(`Auth ${row.name}`, `${row.account ?? ''} · ${row.storage ?? 'Keychain'}`);
+      else ui.line(`${colors.green('✓')} Auth ${row.name}: ${row.status.toLowerCase()} ${colors.dim('— optional')}`);
+    }
+  } catch { /* auth stack optional */ }
 
+  // Local network posture
   const lmBind = spawnSync('lsof', ['-nP', '-iTCP:1234', '-sTCP:LISTEN'], { encoding: 'utf8' });
-  if (/\*:1234/.test(lmBind.stdout)) ui.warn('LM Studio is listening on *:1234, not localhost-only. Review LM Studio networking before local-only agent use.');
-  const git = spawnSync('git', ['status', '--short'], { cwd, encoding: 'utf8' });
-  ui.line(`${git.status === 0 ? 'OK' : 'WARN'} Git: ${git.status === 0 ? 'repository detected' : 'not a git repository or git unavailable'}`);
-  ui.line('OK Security: workspace path boundary enabled; conservative MCP policy enabled; destructive shell commands denied.');
+  if (/\*:1234/.test(lmBind.stdout ?? '')) warn('LM Studio is listening on all interfaces (*:1234)', 'restrict LM Studio server to localhost');
+
+  ui.line('');
+  if (issues.length) {
+    ui.line(`${colors.red(`${issues.length} issue${issues.length === 1 ? '' : 's'} found.`)} Fix the items above and re-run \`edith doctor\`.`);
+    process.exitCode = 1;
+  } else {
+    ui.line(colors.green('EDITH is ready.'));
+  }
 }

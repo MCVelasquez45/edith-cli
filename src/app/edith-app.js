@@ -14,11 +14,15 @@ import { TurnView, friendlyError } from './turn-view.js';
 import { colors } from '../ui/terminal.js';
 import { loadConfig } from '../config.js';
 import { runDoctor } from '../doctor.js';
+import { Telemetry } from '../observability.js';
+import { ensureEdithDirs } from '../runtime/paths.js';
 
 export async function runEdithApp({ cwd = process.cwd(), ui, args = [] }) {
   const flags = parseFlags(args);
+  await ensureEdithDirs();
   const config = await loadConfig(cwd);
   const store = new SessionStore();
+  const telemetry = new Telemetry();
 
   const runtime = new EdithRuntime({
     workspace: cwd,
@@ -93,16 +97,23 @@ export async function runEdithApp({ cwd = process.cwd(), ui, args = [] }) {
       activeTurn = { abort: () => controller.abort() };
       const view = new TurnView({ ui, verbose: state.verbose, workspace: workspaceRoot });
       state.lastView = view;
+      const recorder = telemetry.turnRecorder({
+        sessionId: state.session.id,
+        workspace: workspaceRoot,
+        model: runtime.selection?.ref,
+        agent: runtime.agentForSelection()
+      });
       ui.line(colors.dim(`You: ${text.length > 120 ? `${text.slice(0, 120)}…` : text}`));
       try {
         const result = await runtime.runTurn({
           sessionId: state.session.id,
           text,
           signal: controller.signal,
-          onEvent: (event) => view.handle(event),
+          onEvent: (event) => { recorder.onEvent(event); view.handle(event); },
           requestApproval: async (approval) => promptApproval({ approval, ui, composer })
         });
         view.finish(result);
+        await recorder.finish(result);
         await store.touch(state.session.id, { userMessage: text });
       } catch (error) {
         view.endStream();
