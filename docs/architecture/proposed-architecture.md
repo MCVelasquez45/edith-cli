@@ -1,7 +1,7 @@
 # Proposed EDITH Architecture
 
 Date: 2026-08-08
-Status: audit-based proposal only; no implementation authorized
+Status: **SUPERSEDED (2026-08-22)** — replaced by `TARGET-AGENT-ARCHITECTURE.md` (product north star + TrueForge runtime plan). Retained for history only; do not use for decisions.
 
 ## Evidence-Based Recommendation
 

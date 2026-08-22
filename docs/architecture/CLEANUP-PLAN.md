@@ -5,6 +5,21 @@ _Last updated: 2026-08-22 · Ordered, dependency-aware cleanup. Two tiers: **(A)
 ## Classification legend
 `SAFE TO REMOVE` · `MIGRATE FIRST` · `KEEP` · `INVESTIGATE`
 
+## Tier A progress (2026-08-22)
+
+| Item | Status | Resolution |
+| --- | --- | --- |
+| A5 | ✅ Done | `src/security/redact.js` (`redactSecrets`/`redactDeep`, pattern union, per-surface marker); all 6 callers migrated; `test/redact.test.js` added |
+| A6 | ✅ Done | `GoogleCalendarConnector` extends `GoogleApiConnector`; shared `googleFetch` gained per-call token override; private `googleRequest` deleted |
+| A7 | ✅ Done | `APPROVED_CLOUD_MODEL_ID`/`APPROVED_CLOUD_PROCESSOR_ID` exported from `egress-policy.js`; consumed by planner + agent-core (5 literals removed) |
+| A8 | ✅ Done | `DEFAULT_PROCESSING_MODE` declared once in `config.js`, re-exported via `egress-policy.js`; `.env.example` line kept as override documentation |
+| A9 | ✅ Done (Sprint-1 scope) | cli/doctor/opencode-adapter/mcp-server read model defaults from `defaultConfig()`; endpoint defaults live once per provider client. Deriving `opencode.local.json` from config is deferred to B2 (TF model migration) |
+| A1–A3 | ✅ Done | `src/runtime/*` deleted with its orphaned test; redaction assertion re-homed to `test/redact.test.js` |
+| A4 | ✅ Done | Dead `openCodeProviderId` fields deleted; canonical mapping decision: EDITH IDs are canonical, OpenCode namespace confined to its adapter + `opencode.local.json` until B2 |
+| A10 | ✅ Done | `AUDIT_SUMMARY.md` and `proposed-architecture.md` marked SUPERSEDED, pointing to the new architecture/product docs |
+
+Suite after each step: green (baseline 98/98 → 104/104 with redaction tests → 103/103 after orphaned-test removal).
+
 ---
 
 ## Tier A — cleanup that improves the repo even if TrueForge is never adopted

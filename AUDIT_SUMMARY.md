@@ -2,6 +2,8 @@
 
 Last updated: 2026-08-09
 
+> **SUPERSEDED (2026-08-22).** The "100% VERIFIED" milestone below describes feature-level verification of the CLI orchestrator, not product maturity — the runtime is a regex router with no persistent sessions. For the current evidence-based assessment use `docs/product/EDITH-PRODUCT-MATURITY.md`; for architecture use `docs/architecture/TARGET-AGENT-ARCHITECTURE.md` and `docs/architecture/AGENT-SYSTEM-INVENTORY.md`. Retained for history only.
+
 ## Current Milestone
 
 ```text
