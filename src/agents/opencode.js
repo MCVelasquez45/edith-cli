@@ -1,4 +1,5 @@
 import { commandVersion, runProcess } from './process.js';
+import { defaultConfig } from '../config.js';
 
 export class OpenCodeAdapter {
   id = 'opencode';
@@ -20,7 +21,7 @@ export class OpenCodeAdapter {
   }
 
   async sendTask(prompt, { cwd = process.cwd(), model = null, timeoutMs = 180000, autoApprove = false } = {}) {
-    const selectedModel = model ?? 'lmstudio-local/qwen/qwen3-vl-4b';
+    const selectedModel = model ?? defaultConfig().defaults.codeModel;
     const args = ['run', '--format', 'json', '--model', selectedModel, '--dir', cwd];
     if (autoApprove) args.push('--auto');
     args.push(prompt);

@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 import { createProviderRouter } from '../providers/index.js';
+import { defaultConfig } from '../config.js';
 
 export function createEdithMcpServer() {
   const server = new McpServer({ name: 'edith', version: '0.1.0' });
@@ -44,7 +45,8 @@ export function createEdithMcpServer() {
     },
     async ({ prompt }) => {
       const router = await createProviderRouter({ ui: null });
-      const preferred = router.findModel('lm-studio', 'qwen/qwen3-vl-4b')
+      const localChat = defaultConfig().defaults;
+      const preferred = router.findModel(localChat.localChatProvider, localChat.localChatModel)
         ?? router.modelGroups
           .filter((group) => group.providerId === 'lm-studio' || group.providerId === 'ollama')
           .flatMap((group) => group.models.map((model) => ({ providerId: group.providerId, model })))

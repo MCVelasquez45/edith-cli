@@ -4,7 +4,6 @@ export class OllamaProvider {
   id = 'ollama';
   name = 'Ollama';
   baseUrl = DEFAULT_BASE;
-  openCodeProviderId = 'ollama-local';
 
   async health() {
     const res = await fetch(`${this.baseUrl}/api/version`, { signal: AbortSignal.timeout(2500) });

@@ -8,6 +8,7 @@ import { createDefaultToolRegistry } from './tools/registry.js';
 import { ContextConnectorRegistry } from './context/registry.js';
 import { AuthRegistry } from './auth/registry.js';
 import { NetworkRegistry } from './network/providers.js';
+import { defaultConfig } from './config.js';
 
 export async function runDoctor({ cwd, ui }) {
   ui.section('EDITH Doctor');
@@ -34,8 +35,9 @@ export async function runDoctor({ cwd, ui }) {
     const tools = group.models.filter((model) => model.capabilities?.includes('TOOL_CALLING')).length;
     ui.line(`OK ${group.providerName} models: ${group.models.length} (${chat} chat, ${tools} tool-capable hints)`);
   }
-  const defaultCoding = models.find((group) => group.providerName === 'LM Studio')?.models.find((model) => model.id === 'qwen/qwen3-vl-4b');
-  ui.line(`${defaultCoding ? 'OK' : 'FAIL'} Default coding model: lmstudio-local/qwen/qwen3-vl-4b`);
+  const defaults = defaultConfig().defaults;
+  const defaultCoding = models.find((group) => group.providerName === 'LM Studio')?.models.find((model) => model.id === defaults.defaultCodingModel);
+  ui.line(`${defaultCoding ? 'OK' : 'FAIL'} Default coding model: ${defaults.codeModel}`);
 
   const agents = await new AgentRegistry().list();
   for (const agent of agents) {

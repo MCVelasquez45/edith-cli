@@ -4,7 +4,6 @@ export class LMStudioProvider {
   id = 'lm-studio';
   name = 'LM Studio';
   baseUrl = DEFAULT_BASE;
-  openCodeProviderId = 'lmstudio-local';
 
   async health() {
     const res = await fetch(`${this.baseUrl}/v1/models`, { signal: AbortSignal.timeout(2500) });

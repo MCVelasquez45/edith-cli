@@ -16,9 +16,10 @@ import { AuthRegistry } from './auth/registry.js';
 import { AuthState } from './auth/errors.js';
 import { GOOGLE_SCOPE_BUNDLES } from './auth/google-scopes.js';
 import { AuditLog } from './audit.js';
+import { defaultConfig } from './config.js';
 
 const VERSION = '0.1.0';
-const DEFAULT_CODE_MODEL = process.env.EDITH_CODE_MODEL ?? 'lmstudio-local/qwen/qwen3-vl-4b';
+const DEFAULT_CODE_MODEL = defaultConfig().defaults.codeModel;
 
 export async function main(args) {
   const command = args[0] ?? 'native';
