@@ -1,11 +1,11 @@
 import { DataClass, RequestCapability, analyzeRequest, classifyData } from './request-analysis.js';
-import { DEFAULT_PROCESSING_MODE, egressDecision } from './egress-policy.js';
+import { APPROVED_CLOUD_MODEL_ID, APPROVED_CLOUD_PROCESSOR_ID, DEFAULT_PROCESSING_MODE, egressDecision } from './egress-policy.js';
 
 export function createExecutionPlan({ request, route, router, agents, mode = DEFAULT_PROCESSING_MODE, explicitProcessor = null } = {}) {
   const classification = analyzeRequest(request);
   const dataClasses = classifyData({ request, route });
-  const nvidia = router?.modelGroups?.find((group) => group.providerId === 'nvidia')?.models?.find((model) => model.id === 'z-ai/glm-5.2');
-  const nvidiaProcessor = nvidia ? { id: 'nvidia:z-ai/glm-5.2', provider: 'nvidia', model: nvidia.id, location: 'CLOUD' } : null;
+  const nvidia = router?.modelGroups?.find((group) => group.providerId === 'nvidia')?.models?.find((model) => model.id === APPROVED_CLOUD_MODEL_ID);
+  const nvidiaProcessor = nvidia ? { id: APPROVED_CLOUD_PROCESSOR_ID, provider: 'nvidia', model: nvidia.id, location: 'CLOUD' } : null;
   const localProcessor = router?.current ? { id: `${router.current.providerId}:${router.current.model.id}`, provider: router.current.providerId, model: router.current.model.id, location: 'LOCAL' } : null;
   const steps = [];
 

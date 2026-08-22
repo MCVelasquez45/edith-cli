@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 export const EDITH_CONFIG_DIR = process.env.EDITH_CONFIG_DIR ?? path.join(os.homedir(), '.config', 'edith');
 export const EDITH_CONFIG_PATH = path.join(EDITH_CONFIG_DIR, 'config.json');
+export const DEFAULT_PROCESSING_MODE = 'local-first';
 const PACKAGE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 export function defaultConfig() {
@@ -22,7 +23,7 @@ export function defaultConfig() {
       localChatModel: 'qwen/qwen3-vl-4b'
     },
     processing: {
-      mode: process.env.EDITH_PROCESSING_MODE ?? 'local-first'
+      mode: process.env.EDITH_PROCESSING_MODE ?? DEFAULT_PROCESSING_MODE
     },
     mcp: {
       servers: {

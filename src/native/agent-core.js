@@ -15,9 +15,8 @@ import { classifySearchMode } from '../network/providers.js';
 import { AuditLog } from '../audit.js';
 import { buildProcessorRegistry } from '../routing/processor-registry.js';
 import { createExecutionPlan } from '../routing/planner.js';
-import { sanitizeExternalPayload } from '../routing/egress-policy.js';
+import { APPROVED_CLOUD_MODEL_ID, APPROVED_CLOUD_PROCESSOR_ID, DEFAULT_PROCESSING_MODE, egressDecision, sanitizeExternalPayload } from '../routing/egress-policy.js';
 import { DataClass, classifyData } from '../routing/request-analysis.js';
-import { egressDecision } from '../routing/egress-policy.js';
 
 const MAX_MESSAGES = 24;
 const MAX_TOOL_CONTEXT = 18000;
@@ -44,14 +43,14 @@ export class EdithAgentCore {
     this.lastNetworkItems = [];
     this.lastWeatherLocation = null;
     this.audit = new AuditLog();
-    this.processingMode = 'local-first';
+    this.processingMode = DEFAULT_PROCESSING_MODE;
     this.processors = [];
     this.currentPlan = null;
   }
 
   async initialize({ modelArg = null } = {}) {
     this.config = await loadConfig(this.cwd);
-    this.processingMode = this.config.processing?.mode ?? 'local-first';
+    this.processingMode = this.config.processing?.mode ?? DEFAULT_PROCESSING_MODE;
     this.workspaceInfo = await detectWorkspace(this.cwd);
     this.workspaceTools = new WorkspaceTools({ workspace: this.workspaceInfo.workspace });
     this.router = await createProviderRouter({ ui: this.ui });
@@ -781,17 +780,17 @@ export class EdithAgentCore {
 
   async answerPublicWithNvidia(prompt, context, events, route) {
     const group = this.router.modelGroups.find((item) => item.providerId === 'nvidia');
-    const model = group?.models.find((item) => item.id === 'z-ai/glm-5.2') ?? group?.models.find((item) => item.capabilities?.includes('CHAT'));
+    const model = group?.models.find((item) => item.id === APPROVED_CLOUD_MODEL_ID) ?? group?.models.find((item) => item.capabilities?.includes('CHAT'));
     if (!group || !model) return this.answerLocal(prompt, context, events, { route, maxTokens: 1000 });
     events.activity?.('Analyzing public research · NVIDIA');
-    this.trace.push({ type: 'processor', processor: 'nvidia:z-ai/glm-5.2', dataClassification: [DataClass.PUBLIC], egress: 'allowed' });
-    await this.audit.record({ type: 'external_processing', processor: 'nvidia:z-ai/glm-5.2', dataClassification: [DataClass.PUBLIC], egressAllowed: true, sanitizationApplied: true, payloadSize: sanitizeExternalPayload(context).length }).catch(() => {});
+    this.trace.push({ type: 'processor', processor: APPROVED_CLOUD_PROCESSOR_ID, dataClassification: [DataClass.PUBLIC], egress: 'allowed' });
+    await this.audit.record({ type: 'external_processing', processor: APPROVED_CLOUD_PROCESSOR_ID, dataClassification: [DataClass.PUBLIC], egressAllowed: true, sanitizationApplied: true, payloadSize: sanitizeExternalPayload(context).length }).catch(() => {});
     const messages = [
       { role: 'system', content: 'Analyze only the public research supplied. Do not invent facts or citations.' },
       { role: 'user', content: sanitizeExternalPayload(prompt) }
     ];
     let text = '';
-    events.streamStart?.('NVIDIA · z-ai/glm-5.2');
+    events.streamStart?.(`NVIDIA · ${APPROVED_CLOUD_MODEL_ID}`);
     try {
       for await (const chunk of await group.provider.streamChat({ model: model.id, messages, maxTokens: 1000 })) {
         if (events.signal?.aborted) break;
@@ -802,7 +801,7 @@ export class EdithAgentCore {
       return { text: text.trim(), route, streamed: true };
     } catch (error) {
       events.streamEnd?.();
-      this.trace.push({ type: 'processor_error', processor: 'nvidia:z-ai/glm-5.2', error: error.message });
+      this.trace.push({ type: 'processor_error', processor: APPROVED_CLOUD_PROCESSOR_ID, error: error.message });
       events.activityError?.('NVIDIA unavailable; continuing locally');
       return this.answerLocal(prompt, context, events, { route, maxTokens: 1000 });
     }
