@@ -1,6 +1,6 @@
 # TARGET AGENT ARCHITECTURE
 
-_Last updated: 2026-08-22 · The end-state after adopting Option A (TrueForge as runtime under EDITH), gated on the local-model POC. See `TRUEFORGE-FIT-ANALYSIS.md` for the decision, `CLEANUP-PLAN.md` for the ordered migration, and `../product/EDITH-PRODUCT-MATURITY.md` for the evidence-based gap to production._
+_Last updated: 2026-08-22 · The end-state after adopting Option A (TrueForge as runtime under EDITH), gated on the local-model POC. See `TRUEFORGE-FIT-ANALYSIS.md` for the decision, `CLEANUP-PLAN.md` for the ordered migration, `../product/EDITH-PRODUCT-MATURITY.md` for the evidence-based gap to production, and `../product/EDITH-E2E-PRODUCT-DIRECTIVE.md` for the binding product-experience requirement (Claude Code / Codex CLI quality bar) and the E2E acceptance test._
 
 ---
 
