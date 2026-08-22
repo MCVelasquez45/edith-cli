@@ -20,6 +20,8 @@ import {
   buildModelCatalog, resolveModelSelection, ModelClass, NVIDIA_BASE
 } from './models.js';
 import { describeWorkspace, workspaceContextBlock } from '../workspace/workspace.js';
+import { discoverSkills, skillsInstructionBlock, makeReadSkillTool } from '../skills/registry.js';
+import { z } from 'zod';
 import { classifyData, DataClass } from '../routing/request-analysis.js';
 import { egressDecision, sanitizeExternalPayload, APPROVED_CLOUD_PROCESSOR_ID } from '../routing/egress-policy.js';
 
@@ -59,6 +61,13 @@ export class EdithRuntime {
   async start({ onStatus = () => {}, modelSelection = null } = {}) {
     onStatus('workspace');
     this.workspaceInfo = await describeWorkspace(this.workspace);
+    this.skills = await discoverSkills({ workspace: this.workspaceInfo.root });
+    if (this.skills.length) {
+      this.capabilityService.tools = buildToolset({
+        workspace: this.workspace,
+        extras: [...this.extraTools, makeReadSkillTool({ workspace: this.workspaceInfo.root, z })]
+      });
+    }
 
     onStatus('runtime');
     this.runtimeInfo = await this.supervisor.ensureRunning({ onStatus });
@@ -119,7 +128,8 @@ export class EdithRuntime {
       'Keep answers brief and concrete. Do not narrate tool mechanics; state findings and results.'
     ].join(' ');
     const context = this.workspaceInfo ? `\n\n--- WORKSPACE CONTEXT ---\n${workspaceContextBlock(this.workspaceInfo)}` : '';
-    return core + context;
+    const skills = this.skills?.length ? `\n\n${skillsInstructionBlock(this.skills)}` : '';
+    return core + context + skills;
   }
 
   async ensureAgents() {
