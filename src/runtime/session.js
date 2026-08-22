@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { redactDeep } from '../security/redact.js';
 
 export class SessionStore {
   constructor(root = path.join(os.homedir(), '.edith', 'sessions')) {
@@ -49,8 +50,5 @@ function hash(value) {
 }
 
 function redactSession(session) {
-  return JSON.parse(JSON.stringify(session, (_key, value) => {
-    if (typeof value === 'string' && /(github_pat_|sk-|ghp_|gho_|Bearer\s+)/i.test(value)) return '<REDACTED>';
-    return value;
-  }));
+  return redactDeep(session, { marker: '<REDACTED>' });
 }

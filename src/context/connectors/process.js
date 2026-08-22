@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { redactSecrets } from '../../security/redact.js';
 
 const MAX_OUTPUT_BYTES = 128000;
 
@@ -53,11 +54,4 @@ function runProcess(command, args, { cwd = process.cwd(), timeoutMs = 15000, she
 function appendBounded(current, next) {
   if (current.length >= MAX_OUTPUT_BYTES) return current;
   return (current + next).slice(0, MAX_OUTPUT_BYTES);
-}
-
-function redactSecrets(value) {
-  return value
-    .replace(/gho_[A-Za-z0-9_]+/g, 'gho_[REDACTED]')
-    .replace(/glpat-[A-Za-z0-9_-]+/g, 'glpat-[REDACTED]')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer [REDACTED]');
 }

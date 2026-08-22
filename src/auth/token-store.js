@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { redactSecrets } from '../security/redact.js';
 
 const SERVICE = 'edith.google';
 
@@ -60,15 +61,9 @@ function runSecurity(args) {
       stdout += chunk.toString();
     });
     child.stderr.on('data', (chunk) => {
-      stderr += redact(chunk.toString());
+      stderr += redactSecrets(chunk.toString());
     });
     child.on('error', reject);
     child.on('exit', (code) => resolve({ code: code ?? 1, stdout: stdout.trim(), stderr: stderr.trim() }));
   });
-}
-
-function redact(value) {
-  return value
-    .replace(/(access_token|refresh_token|id_token|client_secret)[^,\s]*/gi, '$1=[REDACTED]')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer [REDACTED]');
 }

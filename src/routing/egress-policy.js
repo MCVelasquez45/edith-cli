@@ -1,5 +1,5 @@
 import { DataClass, isPublicOnly } from './request-analysis.js';
-import { redact } from '../audit.js';
+import { redactSecrets } from '../security/redact.js';
 
 export const DEFAULT_PROCESSING_MODE = 'local-first';
 
@@ -15,9 +15,6 @@ export function egressDecision({ dataClasses = [], processor, mode = DEFAULT_PRO
 
 export function sanitizeExternalPayload(value) {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
-  const redacted = redact(text)
-    .replace(/(api[_-]?key|access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|password|credential|secret)\s*[:=]\s*[^\s,;}]+/gi, '$1=<REDACTED>')
-    .replace(/(authorization|cookie)\s*[:=]\s*[^\n]+/gi, '$1=<REDACTED>')
-    .replace(/\b(EDITH|NVIDIA|OPENAI|ANTHROPIC|GOOGLE)_[A-Z0-9_]+\s*=\s*[^\s]+/g, '$1_<REDACTED>');
+  const redacted = redactSecrets(text, { marker: '<REDACTED>' });
   return typeof value === 'string' ? redacted : JSON.parse(redacted);
 }

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { resolveWorkspacePath, relativePath } from '../tools/path.js';
+import { redactSecrets } from '../security/redact.js';
 
 const MAX_READ_BYTES = 48000;
 const MAX_OUTPUT_BYTES = 64000;
@@ -183,12 +184,4 @@ function assertSafeReadPath(requestedPath) {
       throw new Error(`Refusing to read likely secret-bearing file: ${requestedPath}`);
     }
   }
-}
-
-function redactSecrets(value) {
-  return value
-    .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*["']?[^"'\s]+/gi, '$1=[REDACTED]')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer [REDACTED]')
-    .replace(/sk-[A-Za-z0-9_-]{12,}/g, 'sk-[REDACTED]')
-    .replace(/github_pat_[A-Za-z0-9_]+/g, 'github_pat_[REDACTED]');
 }
