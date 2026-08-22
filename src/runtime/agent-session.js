@@ -21,6 +21,7 @@ import {
 } from './models.js';
 import { describeWorkspace, workspaceContextBlock } from '../workspace/workspace.js';
 import { discoverSkills, skillsInstructionBlock, makeReadSkillTool } from '../skills/registry.js';
+import { makeDelegateSpecialistTool } from '../agents/delegate-tool.js';
 import { z } from 'zod';
 import { classifyData, DataClass } from '../routing/request-analysis.js';
 import { egressDecision, sanitizeExternalPayload, APPROVED_CLOUD_PROCESSOR_ID } from '../routing/egress-policy.js';
@@ -45,6 +46,7 @@ export class EdithRuntime {
     this.instructions = instructions;
     this.approvalMode = approvalMode;
     this.supervisor = supervisor ?? new RuntimeSupervisor({ fetchImpl });
+    this.ownsCapabilityService = !capabilityService;
     this.capabilityService = capabilityService ?? new CapabilityService({
       workspace: this.workspace,
       tools: buildToolset({ workspace: this.workspace, extras: extraTools })
@@ -62,11 +64,11 @@ export class EdithRuntime {
     onStatus('workspace');
     this.workspaceInfo = await describeWorkspace(this.workspace);
     this.skills = await discoverSkills({ workspace: this.workspaceInfo.root });
-    if (this.skills.length) {
-      this.capabilityService.tools = buildToolset({
-        workspace: this.workspace,
-        extras: [...this.extraTools, makeReadSkillTool({ workspace: this.workspaceInfo.root, z })]
-      });
+    if (this.ownsCapabilityService) {
+      const extras = [...this.extraTools];
+      if (this.skills.length) extras.push(makeReadSkillTool({ workspace: this.workspaceInfo.root, z }));
+      extras.push(makeDelegateSpecialistTool({ workspace: this.workspaceInfo.root, z }));
+      this.capabilityService.tools = buildToolset({ workspace: this.workspace, extras });
     }
 
     onStatus('runtime');
