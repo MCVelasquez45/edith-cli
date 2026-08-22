@@ -19,6 +19,7 @@ import {
   discoverLocalProviders, cloudProviderDescriptor, toTrueForgeManifest,
   buildModelCatalog, resolveModelSelection, ModelClass, NVIDIA_BASE
 } from './models.js';
+import { describeWorkspace, workspaceContextBlock } from '../workspace/workspace.js';
 import { classifyData, DataClass } from '../routing/request-analysis.js';
 import { egressDecision, sanitizeExternalPayload, APPROVED_CLOUD_PROCESSOR_ID } from '../routing/egress-policy.js';
 
@@ -56,6 +57,9 @@ export class EdithRuntime {
   }
 
   async start({ onStatus = () => {}, modelSelection = null } = {}) {
+    onStatus('workspace');
+    this.workspaceInfo = await describeWorkspace(this.workspace);
+
     onStatus('runtime');
     this.runtimeInfo = await this.supervisor.ensureRunning({ onStatus });
     this.client = new TrueForgeClient({ baseUrl: this.runtimeInfo.baseUrl, fetchImpl: this.fetchImpl });
@@ -107,13 +111,15 @@ export class EdithRuntime {
   }
 
   defaultInstructions() {
-    return [
+    const core = [
       'You are EDITH, a local-first AI coding agent and assistant running in a terminal.',
-      `Your workspace is ${this.workspace}. You have workspace tools: use them to look at real files, git state, and command output before answering — never guess about workspace contents.`,
+      'You have workspace tools: use them to look at real files, git state, and command output before answering — never guess about workspace contents.',
       'For coding tasks: inspect the relevant files first, make focused edits with edit_file, then verify with run_tests when a test command exists.',
       'Report what you changed concisely. If a tool fails, read the error and adapt rather than repeating the same call.',
       'Keep answers brief and concrete. Do not narrate tool mechanics; state findings and results.'
     ].join(' ');
+    const context = this.workspaceInfo ? `\n\n--- WORKSPACE CONTEXT ---\n${workspaceContextBlock(this.workspaceInfo)}` : '';
+    return core + context;
   }
 
   async ensureAgents() {
