@@ -107,12 +107,16 @@ export class TrueForgeClient {
 
   // ---- agents ----
 
+  // Agents are created by name but addressed by internal id afterwards.
   async upsertAgent(name, manifest) {
     try {
       return await this.request('POST', '/api/v1/agents', { name, manifest });
     } catch (error) {
-      if (isConflict(error)) return this.request('PUT', `/api/v1/agents/${encodeURIComponent(name)}`, { name, manifest });
-      throw error;
+      if (!isConflict(error)) throw error;
+      const agents = await this.listAgents();
+      const existing = (Array.isArray(agents) ? agents : []).find((agent) => agent.name === name);
+      if (!existing?.id) throw error;
+      return this.request('PUT', `/api/v1/agents/${encodeURIComponent(existing.id)}`, { manifest });
     }
   }
 
@@ -123,10 +127,10 @@ export class TrueForgeClient {
 
   // ---- sessions / turns ----
 
-  async createSession({ agentName, title } = {}) {
-    const body = { agent: { name: agentName } };
-    if (title) body.title = title;
-    const res = await this.request('POST', '/api/v1/sessions', body);
+  // Session titles are an EDITH concept (kept in EDITH's session index);
+  // this TrueForge version accepts only the agent binding at creation.
+  async createSession({ agentName } = {}) {
+    const res = await this.request('POST', '/api/v1/sessions', { agent: { name: agentName } });
     return unwrap(res);
   }
 
@@ -153,6 +157,35 @@ export class TrueForgeClient {
 
   async createTurn(sessionId, { input, stream = false } = {}) {
     return unwrap(await this.request('POST', `/api/v1/sessions/${sessionId}/turns`, { input, stream }));
+  }
+
+  // Create a turn with live SSE streaming: events (including model.message.delta)
+  // arrive on the POST response itself. Resolves when the stream closes.
+  async createTurnStreaming(sessionId, { input, onEvent, signal } = {}) {
+    const res = await this.fetchImpl(`${this.baseUrl}/api/v1/sessions/${sessionId}/turns`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({ input, stream: true }),
+      signal
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new TrueForgeError(`POST turns(stream) -> ${res.status}: ${text.slice(0, 400)}`, {
+        status: res.status, method: 'POST', path: 'turns'
+      });
+    }
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for await (const chunk of res.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let boundary;
+      while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const event = parseSseFrame(frame);
+        if (event !== undefined) onEvent?.(event);
+      }
+    }
   }
 
   async getTurn(sessionId, turnId) {
