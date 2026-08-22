@@ -9,8 +9,6 @@ import { AgentRegistry } from './agents/registry.js';
 import { EdithMcpClient } from './mcp/client.js';
 import { McpRegistry } from './mcp/registry.js';
 import { serveEdithMcpStdio } from './mcp/server.js';
-import { createDefaultToolRegistry } from './tools/registry.js';
-import { runNativeEdith } from './native/interactive-cli.js';
 import { ContextConnectorRegistry } from './context/registry.js';
 import { AuthRegistry } from './auth/registry.js';
 import { AuthState } from './auth/errors.js';
@@ -32,9 +30,12 @@ export async function main(args) {
     const { runEdithApp } = await import('./app/edith-app.js');
     return runEdithApp({ cwd, ui, args: command === 'agent' ? args.slice(1) : args });
   }
+  if (command === 'run') {
+    const { runHeadless } = await import('./app/headless.js');
+    return runHeadless({ cwd, args: args.slice(1) });
+  }
   if (command === 'sessions') return printSessions(cwd);
   if (command === 'runtime') return runRuntimeCommand(args.slice(1), ui);
-  if (command === 'legacy') return runNativeEdith({ cwd, ui, args: args.slice(1) });
   if (command === 'mcp-server') return serveEdithMcpStdio();
   if (command === 'doctor') return runDoctor({ cwd, ui });
   if (command === 'code') return runCode(args.slice(1), cwd);
@@ -98,10 +99,12 @@ Usage:
   edith --resume <id>   Resume a specific session
   edith --model <name>  Start with a specific model or class (e.g. local-fast)
   edith --strict        Require approval for write operations too
+  edith run -p "<task>" Run one agent turn headlessly (no TUI) and exit
+                         Flags: --workspace DIR · --model SEL · --json ·
+                                --approve-all · --timeout SECONDS · --strict
   edith sessions        List sessions for this workspace
   edith runtime status|stop|restart
                          Manage EDITH's background runtime
-  edith legacy          The previous regex-routed assistant (temporary)
   edith code            Launch OpenCode with EDITH's verified local coding model
   edith chat            Start direct streaming chat with a local model
   edith models          List live model inventory
@@ -417,13 +420,12 @@ async function runMcpDiscover() {
   console.log('No servers imported. EDITH MCP imports require explicit review.');
 }
 
-function runTools(args) {
+async function runTools(args) {
   const sub = args[0] ?? 'list';
   if (sub !== 'list') throw new Error(`Unknown tools command: ${sub}`);
-  for (const tool of createDefaultToolRegistry().list()) {
-    console.log(`${tool.availability} ${tool.id}`);
-    console.log(`  source: ${tool.source}`);
-    console.log(`  risk: ${tool.risk}`);
+  const { buildToolset } = await import('./capability/toolset.js');
+  for (const tool of buildToolset({ workspace: process.cwd() })) {
+    console.log(`${tool.safety.toUpperCase().padEnd(11)} ${tool.name}`);
     console.log(`  ${tool.description}`);
   }
 }

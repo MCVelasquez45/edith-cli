@@ -1,0 +1,20 @@
+# EDITH on a small real subset of the WorkBuddy Code benchmark (first run:
+# one easy bug-fix task). Scale count/selection up once the local model and
+# wall-clock budget allow.
+model: local/ollama-qwen3-8b
+harness: edith/0.1.0
+dataset: datasets/wb-bench-code-v1.0/tasks
+harness_backend: local
+model_connection: direct
+
+n_attempts: 1
+timeout_multiplier: 1.0
+context_window: 32768
+
+task_selection:
+  mode: name
+  names:
+    - bug_fix-easy-a_crash_in_local
+
+orchestrator_override:
+  n_concurrent_trials: 1

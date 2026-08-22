@@ -1,0 +1,16 @@
+# EDITH harness family — shared identity + split-mount skeleton.
+# EDITH-authored overlay file; applied to the pinned workbuddy-bench checkout
+# by evals/workbuddy/scripts/setup.sh.
+harness:
+  name: edith
+  import_path: "workbuddy_bench.agents.edith_agent:EdithAgent"
+  protocol: openai
+  params: {}
+  mount:
+    name: edith
+    path: /opt/edith
+    dockerfile: configs/harnesses/edith/docker/Dockerfile
+    context: configs/harnesses/edith/docker
+    build:
+      args:
+        MOUNT_PATH: /opt/edith

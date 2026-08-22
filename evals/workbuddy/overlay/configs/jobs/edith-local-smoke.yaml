@@ -1,0 +1,16 @@
+# EDITH infrastructure smoke: one deterministic task from the EDITH smoke
+# dataset, direct connection to local Ollama. Proves the full chain
+# WorkBuddy → Harbor → Docker → EDITH → model → tools → verifier → score
+# without burning real-benchmark inference.
+model: local/ollama-qwen3-8b
+harness: edith/0.1.0
+dataset: datasets/edith-smoke-v0.1/tasks
+harness_backend: local
+model_connection: direct
+
+n_attempts: 1
+timeout_multiplier: 1.0
+context_window: 32768
+
+orchestrator_override:
+  n_concurrent_trials: 1

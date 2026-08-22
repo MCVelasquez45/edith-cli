@@ -1,0 +1,25 @@
+# EDITH smoke dataset: tiny deterministic tasks that prove the benchmark
+# infrastructure end to end. EDITH-authored; installed into the pinned
+# workbuddy-bench checkout by evals/workbuddy/scripts/setup.sh (which also
+# copies the code dataset's shared/verifier plugin next to it).
+[dataset]
+id = "edith-smoke-v0.1"
+schema = "workbuddy.dataset.v1"
+version = "0.1"
+description = "EDITH infrastructure smoke tasks (deterministic, cheap)."
+task_count = 1
+
+[verifier]
+schema = "workbuddy.verifier.v1"
+engine = "composite"
+
+[runtime]
+harness_delivery = "split-mount"
+requires_harness_mount = true
+
+[layout]
+task_root = "tasks"
+environment = "environment"
+workspace_archive = "environment/workspace.tar.gz"
+tests = "tests"
+diff_capture = "git"

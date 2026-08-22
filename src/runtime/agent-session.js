@@ -89,8 +89,19 @@ export class EdithRuntime {
     if (!providers.length) {
       throw new Error('No local model provider found. Start Ollama (`ollama serve`) or LM Studio, then run `edith` again.');
     }
+    this.providerKeyProxies = [];
     for (const provider of providers) {
-      await this.client.upsertModelProvider(toTrueForgeManifest(provider));
+      // Providers that need an API key are registered through a loopback
+      // key-injection proxy so the key never enters TrueForge's persistence.
+      const apiKey = provider.apiKeyEnv ? process.env[provider.apiKeyEnv] : null;
+      if (apiKey) {
+        const proxy = new ModelKeyProxy({ upstreamBaseUrl: provider.baseUrl, getApiKey: async () => process.env[provider.apiKeyEnv] });
+        const proxyUrl = await proxy.start();
+        this.providerKeyProxies.push(proxy);
+        await this.client.upsertModelProvider(toTrueForgeManifest({ ...provider, baseUrl: proxyUrl }));
+      } else {
+        await this.client.upsertModelProvider(toTrueForgeManifest(provider));
+      }
     }
 
     if (process.env.NVIDIA_API_KEY) {
@@ -127,6 +138,7 @@ export class EdithRuntime {
       'You have workspace tools: use them to look at real files, git state, and command output before answering — never guess about workspace contents.',
       'For coding tasks: inspect the relevant files first, make focused edits with edit_file, then verify with run_tests when a test command exists.',
       'Report what you changed concisely. If a tool fails, read the error and adapt rather than repeating the same call.',
+      'If the user cancels a request and asks for something different, drop the cancelled task completely and do only the new one.',
       'Keep answers brief and concrete. Do not narrate tool mechanics; state findings and results.'
     ].join(' ');
     const context = this.workspaceInfo ? `\n\n--- WORKSPACE CONTEXT ---\n${workspaceContextBlock(this.workspaceInfo)}` : '';
@@ -360,6 +372,7 @@ export class EdithRuntime {
   async stop({ stopRuntime = false } = {}) {
     await this.capabilityService?.stop();
     await this.keyProxy?.stop();
+    for (const proxy of this.providerKeyProxies ?? []) await proxy.stop();
     if (stopRuntime) await this.supervisor.shutdown();
   }
 }

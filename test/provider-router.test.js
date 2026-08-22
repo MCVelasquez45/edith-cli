@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { EdithAgentCore } from '../src/native/agent-core.js';
 import { createProviderRouter, ProviderRouter } from '../src/providers/index.js';
 import { NvidiaProvider } from '../src/providers/nvidia.js';
 
@@ -95,40 +94,9 @@ describe('provider router', () => {
     assert.equal(selected.model.id, 'z-ai/glm-5.2');
   });
 
-  it('switches to provider-prefixed NVIDIA models without truncating slashes', async () => {
-    const router = new ProviderRouter({
-      providers: [
-        provider('lm-studio', 'LM Studio', []),
-        provider('ollama', 'Ollama', []),
-        provider('nvidia', 'NVIDIA NIM', [{ id: 'z-ai/glm-5.2', capabilities: ['CHAT'], state: 'remote' }])
-      ]
-    });
-    await router.refresh();
-    const core = Object.create(EdithAgentCore.prototype);
-    core.router = router;
-
-    const selected = await core.switchModel('nvidia:z-ai/glm-5.2');
-
-    assert.equal(selected.providerId, 'nvidia');
-    assert.equal(selected.model.id, 'z-ai/glm-5.2');
-  });
-
-  it('keeps existing Ollama slash shorthand parsing intact', async () => {
-    const router = new ProviderRouter({
-      providers: [
-        provider('lm-studio', 'LM Studio', []),
-        provider('ollama', 'Ollama', [{ id: 'qwen3:8b', capabilities: ['CHAT'] }])
-      ]
-    });
-    await router.refresh();
-    const core = Object.create(EdithAgentCore.prototype);
-    core.router = router;
-
-    const selected = await core.switchModel('ollama/qwen3:8b');
-
-    assert.equal(selected.providerId, 'ollama');
-    assert.equal(selected.model.id, 'qwen3:8b');
-  });
+  // Model-string parsing (nvidia:z-ai/glm-5.2, ollama/qwen3:8b shorthand)
+  // moved to the runtime catalog: see resolveModelSelection coverage in
+  // test/headless.test.js and test/runtime-governance.test.js.
 });
 
 describe('NvidiaProvider', () => {

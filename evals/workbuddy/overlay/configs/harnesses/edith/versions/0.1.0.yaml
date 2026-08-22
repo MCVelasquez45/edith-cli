@@ -1,0 +1,9 @@
+# EDITH 0.1.0 — version pin + preset mapping.
+# The mount image tag (workbuddy-bench/harness/edith:0.1.0) and the
+# EDITH_VERSION build arg are derived from params.EDITH_VERSION by the loader.
+harness:
+  params:
+    EDITH_VERSION: "0.1.0"
+  settings_file: configs/harnesses/edith/presets/settings/v0_1.json
+  env:
+    EDITH_PROCESSING_MODE: "local-first"

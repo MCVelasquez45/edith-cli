@@ -1,0 +1,14 @@
+# Local Ollama qwen3:8b via its OpenAI-compatible endpoint.
+# EDITH-authored overlay file. Secrets/URLs live in .env, never here:
+#   WB_EDITH_BACKEND_URL=http://host.docker.internal:11434/v1
+#   WB_EDITH_BACKEND_KEY=ollama-no-key-required
+model:
+  name: "qwen3:8b"
+  protocols: [openai]
+  backend_url_env: WB_EDITH_BACKEND_URL
+  backend_key_env: WB_EDITH_BACKEND_KEY
+  # qwen3:8b default context in Ollama is 40960; stay under it.
+  context_window: 40960
+  params:
+    max_output_tokens: 4096
+    temperature: 0.0

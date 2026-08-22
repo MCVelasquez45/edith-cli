@@ -1,41 +1,27 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { EdithAgentCore } from '../src/native/agent-core.js';
 import { ContextConnectorRegistry } from '../src/context/registry.js';
 import { ContextQueryEngine } from '../src/context/query-engine.js';
 import { BriefingEngine } from '../src/context/briefing.js';
 import { ConnectorHealth, contextItem } from '../src/context/models.js';
-import { SystemTools } from '../src/native/system-tools.js';
-import { createDefaultToolRegistry } from '../src/tools/registry.js';
+import { buildToolset } from '../src/capability/toolset.js';
 
-describe('personal context routing and safety', () => {
-  it('routes natural personal context requests to normalized tools', () => {
-    const core = new EdithAgentCore();
+// Deterministic clock in the shape BriefingEngine expects (the old
+// SystemTools class was retired with the regex-router runtime).
+function fakeClock(now) {
+  return {
+    currentDate: () => ({ output: `Today is ${now.toISOString().slice(0, 10)} (trusted local time source: runtime clock).` }),
+    currentTime: () => ({ output: `Local time is ${now.toISOString()} (trusted local time source: runtime clock).` }),
+    localTimezone: () => ({ output: 'Timezone: UTC (runtime clock).', timezone: 'UTC' })
+  };
+}
 
-    assert.equal(core.route('Give me my brief.').route, 'context:brief');
-    assert.equal(core.route('Give me an updated brief.').route, 'context:brief-updated');
-    assert.equal(core.route("What's next?").route, 'context:next-event');
-    assert.equal(core.route('What meetings do I have left today?').route, 'context:events');
-    assert.equal(core.route('Do I have any important unread email?').route, 'context:email');
-    assert.equal(core.route('What do I need to review?').route, 'context:development');
-    assert.equal(core.route('How did we do today?').route, 'context:end-of-day');
-  });
-
-  it('routes external mutation requests to explicit confirmation before model fallback', async () => {
-    const core = new EdithAgentCore();
-    const plan = core.route('Move my next meeting to tomorrow.');
-
-    assert.equal(plan.route, 'context:mutation-blocked');
-    const result = await core.executePlan(plan, 'Move my next meeting to tomorrow.', {});
-    assert.match(result.text, /explicit confirmation/i);
-    assert.match(result.text, /did not perform/i);
-  });
-
-  it('does not expose personal-context mutation tools', () => {
-    const tools = createDefaultToolRegistry().list();
+describe('personal context safety', () => {
+  it('never exposes personal-context mutation tools through the capability service', () => {
+    const tools = buildToolset({ workspace: process.cwd() });
     const forbidden = /sendEmail|deleteEmail|createEvent|updateEvent|deleteEvent|createTask|updateTask|mergePR|mergeMR|createIssue/i;
 
-    assert.deepEqual(tools.filter((tool) => forbidden.test(tool.id)).map((tool) => tool.id), []);
+    assert.deepEqual(tools.filter((tool) => forbidden.test(tool.name)).map((tool) => tool.name), []);
   });
 });
 
@@ -43,7 +29,7 @@ describe('briefing engine', () => {
   it('builds a time-aware brief with provenance and unavailable-source status', async () => {
     const now = new Date('2026-08-09T20:00:00.000Z');
     const registry = new ContextConnectorRegistry({ connectors: [new FakeCalendar(), new FakeEmail(), new FakeTasks(), new FakeGitHub()] });
-    const systemTools = new SystemTools();
+    const systemTools = fakeClock(now);
     const query = new FakeQueryEngine({ registry, systemTools, now });
     const briefing = new BriefingEngine({ queryEngine: query, systemTools });
 
@@ -61,7 +47,7 @@ describe('briefing engine', () => {
   it('reports meaningful updated brief deltas without repeating unsupported claims', async () => {
     const now = new Date('2026-08-09T20:00:00.000Z');
     const registry = new ContextConnectorRegistry({ connectors: [new FakeCalendar(), new FakeEmail(), new FakeTasks(), new FakeGitHub()] });
-    const systemTools = new SystemTools();
+    const systemTools = fakeClock(now);
     const query = new FakeQueryEngine({ registry, systemTools, now });
     const briefing = new BriefingEngine({ queryEngine: query, systemTools });
 
@@ -75,7 +61,7 @@ describe('briefing engine', () => {
   it('distinguishes unknown completion from confirmed completion in end-of-day review', async () => {
     const now = new Date('2026-08-09T23:00:00.000Z');
     const registry = new ContextConnectorRegistry({ connectors: [new FakeCalendar(), new FakeEmail(), new FakeTasks(), new FakeGitHub()] });
-    const systemTools = new SystemTools();
+    const systemTools = fakeClock(now);
     const query = new FakeQueryEngine({ registry, systemTools, now });
     const briefing = new BriefingEngine({ queryEngine: query, systemTools });
 

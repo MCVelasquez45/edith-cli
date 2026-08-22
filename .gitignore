@@ -7,3 +7,6 @@ client_secret*.json
 *-oauth-client.json
 opencode.local.json.backup-*
 *.backup-*
+
+# vendored external benchmark clones (managed out-of-band)
+evals/workbuddy/vendor/

@@ -10,7 +10,6 @@ import {
   classifySearchMode,
   parseDuckDuckGoHtml
 } from '../src/network/providers.js';
-import { EdithAgentCore } from '../src/native/agent-core.js';
 
 describe('network policy', () => {
   it('blocks localhost, private IPs, metadata, and non-http URLs', async () => {
@@ -172,22 +171,5 @@ describe('network providers', () => {
   });
 });
 
-describe('network failure handling', () => {
-  it('returns a useful error when the search provider fails', async () => {
-    const core = new EdithAgentCore();
-    core.network = { search: async () => { throw new Error('ECONNRESET'); } };
-
-    const result = await core.answerNetworkSearch('latest OpenCode release', {});
-
-    assert.equal(result.route, 'network:search');
-    assert.match(result.text, /connection failed|reset/i);
-  });
-
-  it('routes broad search and follow-up source fetches', () => {
-    const core = new EdithAgentCore();
-    assert.equal(core.route('What are people saying about OpenCode compared with Claude Code?').route, 'network:search');
-    assert.equal(core.route('Research companies hiring software engineers in Chandler Arizona.').route, 'network:search');
-    assert.equal(core.route('Open the second source and summarize it.').route, 'network:fetch-last');
-    assert.equal(core.route('What needs my attention in GitHub or GitLab?').route, 'context:development');
-  });
-});
+// Regex-router failure/routing cases retired with EdithAgentCore; live-data
+// behavior now flows through the TrueForge agent loop and its tools.

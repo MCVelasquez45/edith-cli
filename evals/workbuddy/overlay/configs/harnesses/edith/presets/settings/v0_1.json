@@ -1,0 +1,6 @@
+{
+  "_comment": "Deterministic EDITH config.json preset for benchmark runs. Written to $EDITH_CONFIG_DIR/config.json by EdithAgent. Keys merge over EDITH's built-in defaults; keep minimal so runs reflect EDITH's real defaults.",
+  "processing": {
+    "mode": "local-first"
+  }
+}

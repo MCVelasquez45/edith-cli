@@ -56,6 +56,44 @@ export async function discoverLocalProviders({ fetchImpl = fetch } = {}) {
     });
   }
 
+  // Generic OpenAI-compatible endpoint (benchmark harnesses, gateways, or any
+  // server EDITH cannot shape-probe). EDITH_OPENAI_BASE_URL must be the full
+  // base including /v1. EDITH_OPENAI_MODEL skips discovery; otherwise GET
+  // {base}/models is tried. EDITH_OPENAI_API_KEY, when set, is injected by
+  // EDITH's loopback key proxy — it never enters TrueForge state.
+  const genericBase = process.env.EDITH_OPENAI_BASE_URL?.replace(/\/+$/, '');
+  if (genericBase) {
+    const explicit = process.env.EDITH_OPENAI_MODEL;
+    const contextLength = Number(process.env.EDITH_OPENAI_CONTEXT_LENGTH ?? 32768);
+    let models = [];
+    if (explicit) {
+      models = [{ model_id: explicit, name: sanitizeModelName(explicit), contextLength, toolCapable: true, reasoning: false, sizeBytes: null }];
+    } else {
+      const listed = await fetchJson(`${genericBase}/models`, { fetchImpl });
+      models = (listed?.data ?? [])
+        .filter((model) => !/embed/i.test(model.id))
+        .map((model) => ({
+          model_id: model.id,
+          name: sanitizeModelName(model.id),
+          contextLength,
+          toolCapable: true,
+          reasoning: false,
+          sizeBytes: null
+        }));
+    }
+    if (models.length) {
+      providers.push({
+        providerName: 'openai-compatible',
+        // LOCAL by default: intended for loopback/host-local endpoints. Set
+        // EDITH_OPENAI_LOCATION=CLOUD for remote APIs so egress governance applies.
+        location: process.env.EDITH_OPENAI_LOCATION === 'CLOUD' ? 'CLOUD' : 'LOCAL',
+        baseUrl: genericBase,
+        apiKeyEnv: 'EDITH_OPENAI_API_KEY',
+        models
+      });
+    }
+  }
+
   const lmstudio = await fetchJson(`${LMSTUDIO_BASE}/v1/models`, { fetchImpl });
   if (lmstudio?.data?.length) {
     providers.push({
