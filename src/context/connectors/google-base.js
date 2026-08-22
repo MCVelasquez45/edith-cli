@@ -62,8 +62,8 @@ export class GoogleApiConnector {
     return this.authProvider.accessToken({ requiredScopes: this.scopes });
   }
 
-  async googleFetch(url, { method = 'GET', body = null, headers = {} } = {}) {
-    const token = await this.token();
+  async googleFetch(url, { method = 'GET', body = null, headers = {}, token = null } = {}) {
+    token = token ?? await this.token();
     const response = await this.fetch(url, {
       method,
       headers: {

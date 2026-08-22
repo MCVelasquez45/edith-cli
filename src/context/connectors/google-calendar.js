@@ -1,4 +1,4 @@
-import { GoogleWorkspaceAuthProvider } from '../../auth/google-oauth.js';
+import { GoogleApiConnector } from './google-base.js';
 import { GOOGLE_SCOPE_REGISTRY } from '../../auth/google-scopes.js';
 import { AuthState } from '../../auth/errors.js';
 import { ConnectorHealth, contextItem, limitItems } from '../models.js';
@@ -9,17 +9,19 @@ const CALENDAR_READ_SCOPES = [
 ];
 const API_ROOT = 'https://www.googleapis.com/calendar/v3';
 
-export class GoogleCalendarConnector {
-  constructor({ profile = 'personal', authProvider = new GoogleWorkspaceAuthProvider({ profile }), fetchImpl = fetch, limit = 20 } = {}) {
-    this.id = `google-calendar:${profile}`;
-    this.name = 'Google Calendar';
-    this.sourceType = 'calendar';
-    this.profile = profile;
-    this.authProvider = authProvider;
-    this.fetch = fetchImpl;
+export class GoogleCalendarConnector extends GoogleApiConnector {
+  constructor({ profile = 'personal', authProvider, fetchImpl = fetch, limit = 20 } = {}) {
+    super({
+      id: `google-calendar:${profile}`,
+      name: 'Google Calendar',
+      sourceType: 'calendar',
+      profile,
+      scopes: CALENDAR_READ_SCOPES,
+      capabilities: ['calendars.read', 'events.read', 'events.create', 'events.update', 'events.delete', 'events.respond'],
+      ...(authProvider ? { authProvider } : {}),
+      fetchImpl
+    });
     this.limit = limit;
-    this.capabilities = ['calendars.read', 'events.read', 'events.create', 'events.update', 'events.delete', 'events.respond'];
-    this.readOnly = false;
     this._status = null;
     this._calendars = null;
   }
@@ -90,7 +92,7 @@ export class GoogleCalendarConnector {
     const token = await this.authProvider.accessToken({ anyScope: CALENDAR_READ_SCOPES });
     const url = new URL(`${API_ROOT}/users/me/calendarList`);
     url.searchParams.set('maxResults', String(Math.min(limit, 250)));
-    const data = await this.googleGet(url, token.accessToken);
+    const { json: data } = await this.googleFetch(url, { token });
     const items = (data.items ?? []).map((calendar) => ({
       id: calendar.id,
       title: calendar.summaryOverride || calendar.summary || calendar.id,
@@ -124,7 +126,7 @@ export class GoogleCalendarConnector {
       url.searchParams.set('showDeleted', 'true');
       url.searchParams.set('maxResults', String(Math.min(limit, 250)));
       const token = await this.authProvider.accessToken({ anyScope: CALENDAR_READ_SCOPES });
-      const data = await this.googleGet(url, token.accessToken);
+      const { json: data } = await this.googleFetch(url, { token });
       for (const event of data.items ?? []) events.push(normalizeEvent({ event, calendar, profile: token.profile, account: token.account }));
     }
     return limitItems(events.sort((a, b) => compareDates(a.startAt, b.startAt)), limit);
@@ -153,38 +155,22 @@ export class GoogleCalendarConnector {
       end: { dateTime: end.toISOString() },
       ...(attendees.length ? { attendees: attendees.map((email) => ({ email })) } : {})
     };
-    const data = await this.googleRequest(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events`, token.accessToken, { method: 'POST', body });
+    const { json: data } = await this.googleFetch(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events`, { method: 'POST', body, token });
     const calendar = (this._calendars ?? (await this.getCalendars()).items).find((item) => item.id === calendarId) ?? { id: calendarId, title: calendarId };
     return normalizeEvent({ event: data, calendar, profile: token.profile, account: token.account });
   }
 
   async updateEvent({ calendarId = 'primary', eventId, patch }) {
     const token = await this.authProvider.accessToken({ requiredScopes: [GOOGLE_SCOPE_REGISTRY.calendarPersonal.scopes[2]] });
-    const data = await this.googleRequest(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, token.accessToken, { method: 'PATCH', body: patch });
+    const { json: data } = await this.googleFetch(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', body: patch, token });
     const calendar = (this._calendars ?? (await this.getCalendars()).items).find((item) => item.id === calendarId) ?? { id: calendarId, title: calendarId };
     return normalizeEvent({ event: data, calendar, profile: token.profile, account: token.account });
   }
 
   async deleteEvent({ calendarId = 'primary', eventId }) {
     const token = await this.authProvider.accessToken({ requiredScopes: [GOOGLE_SCOPE_REGISTRY.calendarPersonal.scopes[2]] });
-    await this.googleRequest(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, token.accessToken, { method: 'DELETE' });
+    await this.googleFetch(`${API_ROOT}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE', token });
     return { id: eventId, source: 'google-calendar', sourceAccount: token.profile, deleted: true };
-  }
-
-  async googleGet(url, accessToken) {
-    return this.googleRequest(url, accessToken);
-  }
-
-  async googleRequest(url, accessToken, { method = 'GET', body = null } = {}) {
-    const response = await this.fetch(url, {
-      method,
-      headers: { authorization: `Bearer ${accessToken}`, ...(body ? { 'content-type': 'application/json' } : {}) },
-      body: body ? JSON.stringify(body) : null
-    });
-    const text = await response.text();
-    const json = text ? JSON.parse(text) : {};
-    if (!response.ok) throw new Error(json.error?.message || json.error_description || 'Google Calendar API request failed.');
-    return json;
   }
 }
 
