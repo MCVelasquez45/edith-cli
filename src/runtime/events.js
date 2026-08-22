@@ -27,6 +27,23 @@ export class TurnEventNormalizer {
     return this.toolCallsById.get(toolCallId)?.name ?? null;
   }
 
+  // Emit the tool-call announcement once args are usable (valid JSON), or
+  // immediately when forced (the tool is about to respond / needs approval).
+  announceIfReady(toolCallId, { force = false } = {}) {
+    const call = this.toolCallsById.get(toolCallId);
+    if (!call || call.announced) return null;
+    let args = null;
+    if (call.args !== undefined && call.args !== null) {
+      args = call.args;
+    } else if (call.argsText) {
+      try { args = JSON.parse(call.argsText); } catch { if (!force) return null; }
+    } else if (!force) {
+      return null;
+    }
+    call.announced = true;
+    return { state: EdithState.TOOL_RUNNING, type: 'tool-call', toolCallId, tool: call.name, args };
+  }
+
   toolArgs(toolCallId) {
     const call = this.toolCallsById.get(toolCallId);
     if (!call) return null;
@@ -51,19 +68,23 @@ export class TurnEventNormalizer {
         out.push({ state: EdithState.STREAMING, type: 'text-delta', text: event.content });
       }
       // Live tool calls stream as chunks: the first chunk carries id+name,
-      // later chunks append argument fragments keyed by index.
+      // later chunks append argument fragments keyed by index. The tool-call
+      // event is emitted once the accumulated arguments parse as JSON (or is
+      // flushed when the tool responds), so UI labels always have real args.
       for (const chunk of event.tool_calls ?? []) {
         const index = chunk.index ?? 0;
         if (chunk.id) {
           const name = chunk.function?.name ?? chunk.tool_info?.name ?? 'tool';
-          this.toolCallsById.set(chunk.id, { name, argsText: chunk.function?.arguments ?? '' });
+          this.toolCallsById.set(chunk.id, { name, argsText: chunk.function?.arguments ?? '', announced: false });
           this.pendingCallByIndex.set(index, chunk.id);
-          out.push({ state: EdithState.TOOL_RUNNING, type: 'tool-call', toolCallId: chunk.id, tool: name, args: null });
         } else if (chunk.function?.arguments) {
           const callId = this.pendingCallByIndex.get(index);
           const call = callId ? this.toolCallsById.get(callId) : null;
           if (call) call.argsText = (call.argsText ?? '') + chunk.function.arguments;
         }
+        const callId = chunk.id ?? this.pendingCallByIndex.get(index);
+        const announce = callId ? this.announceIfReady(callId) : null;
+        if (announce) out.push(announce);
       }
       return out;
     }
@@ -74,8 +95,9 @@ export class TurnEventNormalizer {
         let args = call.function?.arguments ?? call.arguments ?? null;
         if (typeof args === 'string') { try { args = JSON.parse(args); } catch { /* keep raw */ } }
         const known = this.toolCallsById.get(call.id);
-        this.toolCallsById.set(call.id, { name, args });
-        if (known) continue; // already announced from live deltas
+        this.toolCallsById.set(call.id, { name, args, announced: known?.announced ?? false });
+        if (known?.announced) continue; // already announced from live deltas
+        this.toolCallsById.get(call.id).announced = true;
         out.push({ state: EdithState.TOOL_RUNNING, type: 'tool-call', toolCallId: call.id, tool: name, args });
       }
       const textBody = extractText(event.content);
@@ -87,17 +109,24 @@ export class TurnEventNormalizer {
     }
 
     if (type === 'tool.response') {
+      const flush = this.announceIfReady(event.tool_call_id, { force: true });
+      if (flush) out.push(flush);
       out.push({
         state: EdithState.TOOL_RUNNING,
         type: 'tool-result',
         toolCallId: event.tool_call_id,
         tool: this.toolName(event.tool_call_id),
+        args: this.toolArgs(event.tool_call_id),
         content: typeof event.content === 'string' ? event.content : JSON.stringify(event.content ?? '')
       });
       return out;
     }
 
     if (type === 'tool.approval_required') {
+      for (const ref of event.tool_calls ?? []) {
+        const flush = this.announceIfReady(ref.id, { force: true });
+        if (flush) out.push(flush);
+      }
       out.push({
         state: EdithState.WAITING_APPROVAL,
         type: 'approval-required',

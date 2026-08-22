@@ -77,17 +77,25 @@ test('runtime supervisor', async (t) => {
           else res.writeHead(404).end();
         });
         server.listen(portArg, '127.0.0.1');
+        server.on('error', () => {}); // port race: the retry below handles it
         listening = server;
       }, 300);
       return child;
     };
-    // Pick a free port by binding then closing.
-    const probe = await fakeTrueForgeServer();
-    const port = probe.port;
-    await new Promise((resolve) => probe.server.close(resolve));
-    const supervisor = new RuntimeSupervisor(supervisorOptions(dir, port, { spawnImpl }));
     try {
-      const result = await supervisor.ensureRunning();
+      // Picking a free port then closing it is racy under parallel test
+      // files, so retry on a fresh port if another process grabbed it.
+      let result = null;
+      let port = null;
+      for (let attempt = 0; attempt < 3 && !result; attempt += 1) {
+        const probe = await fakeTrueForgeServer();
+        port = probe.port;
+        await new Promise((resolve) => probe.server.close(resolve));
+        const supervisor = new RuntimeSupervisor(supervisorOptions(dir, port, { spawnImpl }));
+        result = await supervisor.ensureRunning().catch(() => null);
+        if (!result) { listening?.close(); listening = null; await supervisor.clearState(); }
+      }
+      assert.ok(result, 'supervisor failed to start on 3 fresh ports');
       assert.equal(result.reused, false);
       assert.equal(result.managed, true);
       assert.equal(result.pid, 424242);

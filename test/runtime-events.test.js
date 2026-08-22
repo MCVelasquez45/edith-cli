@@ -34,6 +34,44 @@ test('turn event normalizer', async (t) => {
     assert.equal(approval[0].toolCalls[0].tool, 'read_file');
   });
 
+  await t.test('streamed tool-call chunks announce once args are complete', () => {
+    const normalizer = new TurnEventNormalizer();
+    const first = normalizer.normalize({
+      type: 'model.message.delta',
+      tool_calls: [{ index: 0, id: 'call-9', function: { name: 'read_file', arguments: '' } }]
+    });
+    assert.equal(first.length, 0, 'no announcement before args are usable');
+    const partial = normalizer.normalize({
+      type: 'model.message.delta',
+      tool_calls: [{ index: 0, function: { arguments: '{"path":' } }]
+    });
+    assert.equal(partial.length, 0, 'incomplete JSON args stay pending');
+    const complete = normalizer.normalize({
+      type: 'model.message.delta',
+      tool_calls: [{ index: 0, function: { arguments: '"notes.txt"}' } }]
+    });
+    assert.equal(complete[0].type, 'tool-call');
+    assert.deepEqual(complete[0].args, { path: 'notes.txt' });
+    // The persisted complete message must not re-announce.
+    const replay = normalizer.normalize({
+      type: 'model.message',
+      tool_calls: [{ id: 'call-9', function: { name: 'read_file', arguments: '{"path":"notes.txt"}' } }]
+    });
+    assert.equal(replay.filter((event) => event.type === 'tool-call').length, 0);
+  });
+
+  await t.test('never-completing args flush when the tool responds', () => {
+    const normalizer = new TurnEventNormalizer();
+    normalizer.normalize({
+      type: 'model.message.delta',
+      tool_calls: [{ index: 0, id: 'call-x', function: { name: 'git_status', arguments: '' } }]
+    });
+    const events = normalizer.normalize({ type: 'tool.response', tool_call_id: 'call-x', content: 'clean' });
+    assert.equal(events[0].type, 'tool-call');
+    assert.equal(events[0].tool, 'git_status');
+    assert.equal(events[1].type, 'tool-result');
+  });
+
   await t.test('marks complete message text as already-streamed when deltas were seen', () => {
     const normalizer = new TurnEventNormalizer();
     normalizer.normalize({ type: 'model.message.delta', content: 'Hi' });

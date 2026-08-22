@@ -56,9 +56,12 @@ export class SessionStore {
   async list({ workspace = null, includeArchived = false } = {}) {
     const sessions = await this.load();
     return sessions
-      .filter((session) => !session.archived || includeArchived)
-      .filter((session) => !workspace || session.workspace === workspace)
-      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+      .map((session, index) => ({ session, index }))
+      .filter(({ session }) => !session.archived || includeArchived)
+      .filter(({ session }) => !workspace || session.workspace === workspace)
+      // Recency, with insertion order breaking same-millisecond ties.
+      .sort((a, b) => (b.session.updatedAt ?? '').localeCompare(a.session.updatedAt ?? '') || b.index - a.index)
+      .map(({ session }) => session);
   }
 
   async latest({ workspace = null } = {}) {

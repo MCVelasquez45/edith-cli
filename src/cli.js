@@ -22,13 +22,19 @@ const VERSION = '0.1.0';
 const DEFAULT_CODE_MODEL = defaultConfig().defaults.codeModel;
 
 export async function main(args) {
-  const command = args[0] ?? 'native';
+  const command = args[0] ?? 'agent';
   const cwd = process.cwd();
   const ui = new TerminalUI();
 
   if (command === '--version' || command === '-v') return console.log(VERSION);
   if (command === '--help' || command === '-h' || command === 'help') return printHelp();
-  if (command === 'native' || command === '--model') return runNativeEdith({ cwd, ui, args });
+  if (command === 'agent' || command.startsWith('--')) {
+    const { runEdithApp } = await import('./app/edith-app.js');
+    return runEdithApp({ cwd, ui, args: command === 'agent' ? args.slice(1) : args });
+  }
+  if (command === 'sessions') return printSessions(cwd);
+  if (command === 'runtime') return runRuntimeCommand(args.slice(1), ui);
+  if (command === 'legacy') return runNativeEdith({ cwd, ui, args: args.slice(1) });
   if (command === 'mcp-server') return serveEdithMcpStdio();
   if (command === 'doctor') return runDoctor({ cwd, ui });
   if (command === 'code') return runCode(args.slice(1), cwd);
@@ -46,16 +52,58 @@ export async function main(args) {
   throw new Error(`Unknown command: ${command}. Try edith --help.`);
 }
 
+async function printSessions(cwd) {
+  const { SessionStore } = await import('./sessions/store.js');
+  const { describeWorkspace } = await import('./workspace/workspace.js');
+  const ws = await describeWorkspace(cwd);
+  const sessions = await new SessionStore().list({ workspace: ws.root });
+  if (!sessions.length) {
+    console.log('No sessions for this workspace. Start one with `edith`.');
+    return;
+  }
+  for (const session of sessions) {
+    console.log(`${session.id.slice(0, 12)}  ${session.updatedAt?.slice(0, 16) ?? ''}  ${session.turns ?? 0} turn(s)  ${session.title ?? '(untitled)'}`);
+  }
+  console.log('\nResume with `edith --resume <id>` or `edith --continue` for the latest.');
+}
+
+async function runRuntimeCommand(args, ui) {
+  const { RuntimeSupervisor } = await import('./runtime/supervisor.js');
+  const supervisor = new RuntimeSupervisor();
+  const sub = args[0] ?? 'status';
+  if (sub === 'status') {
+    const status = await supervisor.status();
+    console.log(status.running ? `OK runtime healthy at ${status.state.baseUrl}` : 'Runtime is not running (it starts automatically with `edith`).');
+    return;
+  }
+  if (sub === 'stop') {
+    const result = await supervisor.shutdown();
+    console.log(result.stopped ? `Stopped runtime (pid ${result.pid}).` : `Nothing stopped: ${result.reason}.`);
+    return;
+  }
+  if (sub === 'restart') {
+    const info = await supervisor.restart({ onStatus: (s) => ui.line(s) });
+    console.log(`Runtime restarted at ${info.baseUrl}.`);
+    return;
+  }
+  throw new Error(`Unknown runtime command: ${sub}`);
+}
+
 function printHelp() {
   console.log(`EDITH ${VERSION}
 
 Usage:
-  edith                 Launch native EDITH conversational agent
-  edith --model <provider:model>
+  edith                 Open EDITH — the interactive AI coding agent
+  edith --continue      Resume the latest session in this workspace
+  edith --resume <id>   Resume a specific session
+  edith --model <name>  Start with a specific model or class (e.g. local-fast)
+  edith --strict        Require approval for write operations too
+  edith sessions        List sessions for this workspace
+  edith runtime status|stop|restart
+                         Manage EDITH's background runtime
+  edith legacy          The previous regex-routed assistant (temporary)
   edith code            Launch OpenCode with EDITH's verified local coding model
-  edith code --model <provider/model>
-  edith chat            Start direct streaming chat
-  edith chat --model <provider:model-id>
+  edith chat            Start direct streaming chat with a local model
   edith models          List live model inventory
   edith providers       List provider health
   edith agents          List available coding agents
