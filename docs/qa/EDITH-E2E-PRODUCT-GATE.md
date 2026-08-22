@@ -15,12 +15,12 @@ Assessed against the current live path: native cockpit (`src/native/*`) with reg
 | Git context detected | PARTIAL | branch/status/diff context via workspace tools; not fed to a reasoning loop |
 | Natural conversation | PARTIAL | LLM synthesis exists, but regex intent routing constrains what conversation can trigger |
 | Token streaming | PASS | provider `streamChat` streams to terminal (`src/native/agent-core.js:838`) |
-| Agent loop | NOT IMPLEMENTED | no model tool-calling; `route()` + hardcoded handlers. Target: TrueForge AgentThread (Stage-A POC passed) |
+| Agent loop | NOT IMPLEMENTED | no model tool-calling in `edith`; `route()` + hardcoded handlers. Target runtime proven: Stage-B POC ran a real reason→tool→observe→reason loop on qwen3:8b through TrueForge (12/12) |
 | File read | PARTIAL | read-only workspace tools with secret redaction; regex-triggered, not agent-selected |
 | File search | PARTIAL | workspace search exists; same limitation |
 | File edit | PARTIAL | `src/tools/tool-engine.js` can write/patch with approval flag, but is a disjoint surface not reachable from conversation |
 | Shell execution | NOT IMPLEMENTED | no controlled shell tool; only fixed git subprocess calls; shell work is delegated to external CLIs |
-| Tool-result reasoning | NOT IMPLEMENTED | no reason→tool→observe→reason loop |
+| Tool-result reasoning | NOT IMPLEMENTED | absent in `edith`; proven through TrueForge in Stage-B POC (multi-step: list_files → observe → read_file → observe → answer) |
 | Multi-step execution | PARTIAL | hardcoded `executePlan` handler sequences only |
 | Approval prompt | PARTIAL | confirmation gating in `src/tools/policy.js`; not a live in-loop approval protocol (Allow once / session / Deny) |
 | Interrupt/cancel | FAIL | no SIGINT handling in the cockpit; Ctrl+C kills the whole process |
@@ -31,7 +31,7 @@ Assessed against the current live path: native cockpit (`src/native/*`) with reg
 | Local model | PASS | Ollama + LM Studio first-class (`src/providers/*`); verified through TrueForge in Stage-A POC |
 | Cloud model | PASS | approved NVIDIA cloud model behind egress governance (PUBLIC-only, sanitized) |
 | Skills | NOT IMPLEMENTED | none in repo; target: TrueForge git-backed SKILL.md |
-| MCP | PARTIAL | stdio client + self server with 3 read-only tools; not usable by an agent loop; TF MCP client is remote-transport only (shim needed) |
+| MCP | PARTIAL | stdio client + self server with 3 read-only tools; not usable by an agent loop. Integration shape proven in Stage-B POC: local streamable-http MCP server registered in TF, tools discovered and called by the agent |
 | Diff visibility | PARTIAL | `src/tools/diff.js` + bounded git diff context; no per-edit diff UX |
 | Git awareness | PARTIAL | status/branch/diff readable; no agent reasoning over it |
 | `edith doctor` | PARTIAL | `runDoctor` validates local providers + security findings; does not cover TrueForge runtime, DB, Keychain, MCP, workspace, skills |

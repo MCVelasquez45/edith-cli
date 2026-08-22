@@ -1,4 +1,4 @@
-# TRUEFORGE INTEGRATION TEST — Stage A POC results
+# TRUEFORGE INTEGRATION TEST — Stage A + Stage B POC results
 
 _Run: 2026-08-22 · Machine: darwin arm64, Node v26.5.0, pnpm 11.10.0 · TrueForge `@0.1.4` (local/standalone, SQLite) · Local model: Ollama `qwen3:8b` @ `127.0.0.1:11434`._
 
@@ -29,7 +29,7 @@ Legend: PASS / FAIL / BLOCKED / NOT TESTED.
 | 11 | Session/turn persisted in SQLite | **PASS** | `session=1, turn=1, turn_thread=1, model_provider=1, agent=1` rows |
 | 12 | Provider connects (local, no key) | **PASS** | `custom` provider, optional api_key omitted |
 | 13 | EDITH can invoke the runtime (client role) | **PASS** | whole POC is a plain HTTP client = EDITH's future integration shape |
-| 14 | MCP tool call through an agent | **NOT TESTED** | see "Deferred" below |
+| 14 | MCP tool call through an agent | **PASS (Stage B)** | see "Stage B results" below — 12/12 |
 | 15 | Skill load through sandbox | **NOT TESTED** | requires provisioning local sandbox + skill catalog; out of Stage-A scope |
 | 16 | Context compaction | **NOT TESTED** | requires >50k-token history; out of Stage-A scope |
 | 17 | EDITH egress governance wrapping TF | **NOT TESTED** | Stage C design item (see `TARGET-AGENT-ARCHITECTURE.md` §3) |
@@ -42,15 +42,44 @@ Legend: PASS / FAIL / BLOCKED / NOT TESTED.
 - **MCP tool call (#14):** TrueForge's MCP client is **remote-transport only** (streamable-http then SSE — `core/mcp/remoteMcpClient.ts`). EDITH's own MCP server is **stdio** (`src/mcp/server.js`), so it cannot attach directly; it would need a thin HTTP shim, or a remote read-only MCP (which needs network/OAuth and would violate the local-only guardrail for this POC). Additionally, reliable tool-calling needs a tool-capable model; `qwen3:8b` is small. This is the **next POC increment**, deliberately scoped out of the make-or-break test.
 - **Skills / compaction / sandbox execution:** implemented upstream (verified in source) but require additional provisioning; not needed to answer the go/no-go question.
 
+## Stage B results — tool-capable agent (run: 2026-08-22)
+
+_The deferred "next POC increment" from Stage A. Proves the loop EDITH lacks entirely today: **reason → tool call → observation → reason → answer**, on a local model, no cloud. Fixture: a minimal read-only streamable-http MCP server (`mcp-tool-server.mjs`, tools `list_files`/`read_file` scoped to `stage-b-workspace/`) — this is the shape EDITH-owned tools must take, since TrueForge's MCP client is remote-transport only (stdio cannot attach)._
+
+**Design:** the agent is asked for a "build code" that exists only inside `stage-b-workspace/notes.txt` (`EDITH-7743-LOCAL`). Success is impossible without a genuine tool round-trip — the model cannot know the fact from training data.
+
+| # | Check | Result | Evidence |
+| --- | --- | --- | --- |
+| B1 | Local MCP fixture serves streamable-http | **PASS** | JSON-RPC `initialize` returns `edith-poc-tools` |
+| B2 | TrueForge registers remote MCP server | **PASS** | `POST /api/v1/settings/mcp-servers` (`type: remote`, localhost URL, no auth) |
+| B3 | TrueForge↔MCP handshake + tool discovery | **PASS** | `GET /api/v1/mcp-servers/edith-poc-tools/tools` lists `list_files`, `read_file` |
+| B4 | Agent with local model + MCP tools (preloaded, read-only auto-approved) | **PASS** | `mcp_servers: [{name, preload_tools, require_approval_for_tools: [@write,@destructive]}]` |
+| B5 | **Agent issues real tool calls (model-driven, not regex)** | **PASS** | turn events: `mcp.initialize, model.message, tool.response, turn.done` |
+| B6 | **Multi-step loop** — `list_files` → observe → `read_file` → observe | **PASS** | both tool responses present in turn events |
+| B7 | Tool observation reaches the model | **PASS** | `EDITH-7743-LOCAL` present in `tool.response` event |
+| B8 | **Final answer uses the observation** | **PASS** | model output: "The build code recorded in the workspace notes is: **EDITH-7743-LOCAL**." |
+| B9 | qwen3:8b (8B local) is tool-call capable through TF's Vercel-AI `custom` provider | **PASS** | all of the above on `ollama-local/qwen3-8b` |
+
+**Score: 12/12 driver steps PASS (`poc-stage-b.mjs`).**
+
+**Integration findings for EDITH-owns-the-lifecycle (Sprint 2/3):**
+1. **TrueForge binds IPv6 `::1` only** (`lsof`: `TCP [::1]:8790`). Clients must use `localhost`/`[::1]`, not `127.0.0.1` — EDITH's runtime supervisor must handle this (or configure the bind host).
+2. **EDITH tools must be served over streamable-http MCP**, not stdio — a thin local HTTP MCP layer (like the fixture) is the integration shape for EDITH's workspace/file/shell tools.
+3. Read-only tools flow with **no approval pause** under the default `[@write, @destructive]` approval policy — matching the directive's safety UX (safe ops automatic, destructive ops gated).
+
 ## Reproduce
 
 ```bash
 cd ~/orca/reference/trueforge-poc
-# start runtime (standalone, sqlite):
+# start the read-only MCP tool fixture (:8791):
+node mcp-tool-server.mjs &
+# start runtime (standalone, sqlite — binds [::1]):
 STANDALONE=true SQLITE_PATH="$(pwd)/data/db.sqlite" \
   node node_modules/@truefoundry/trueforge/dist/cli.js --port 8790 &
-# drive it (requires Ollama running with qwen3:8b):
-node poc.mjs
+# Stage A (requires Ollama running with qwen3:8b):
+TF_BASE='http://[::1]:8790' node poc.mjs
+# Stage B (tool-capable agent):
+TF_BASE='http://[::1]:8790' node poc-stage-b.mjs
 ```
 
 ## Conclusion
@@ -62,7 +91,7 @@ The go/no-go gate in `TRUEFORGE-FIT-ANALYSIS.md` is **PASSED**: local-first infe
 | Stage | Description | Status |
 | --- | --- | --- |
 | A | Install TrueForge alongside; nothing breaks; local model turn | **COMPLETE** |
-| B | Test agent: model + MCP tool + skill + sandbox + streaming | **PARTIAL** (model+streaming+sandbox-probe done; MCP tool/skill deferred) |
+| B | Test agent: model + MCP tool + skill + sandbox + streaming | **COMPLETE (core)** — model+streaming+sandbox-probe+**MCP tool loop (12/12, 2026-08-22)**; skill-through-sandbox remains deferred to the sprint that needs it |
 | C | EDITH becomes a client of the runtime (governance layer) | **NOT STARTED** (designed in TARGET doc §3) |
 | D | Move one low-risk workflow | **NOT STARTED** |
 | E | Migrate sessions/context/tools/skills/routing | **NOT STARTED** |
