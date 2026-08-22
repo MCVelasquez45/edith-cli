@@ -5,7 +5,11 @@ harness:
   name: edith
   import_path: "workbuddy_bench.agents.edith_agent:EdithAgent"
   protocol: openai
-  params: {}
+  params:
+    # `edith run --timeout` — must stay below the task's [agent].timeout_sec
+    # (× timeout_multiplier) so EDITH self-cancels cleanly (exit 124) before
+    # Harbor hard-kills the exec. Override per job via harness_params_override.
+    EDITH_TIMEOUT_SECONDS: 1140
   mount:
     name: edith
     path: /opt/edith

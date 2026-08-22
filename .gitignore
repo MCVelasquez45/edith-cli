@@ -10,3 +10,5 @@ opencode.local.json.backup-*
 
 # vendored external benchmark clones (managed out-of-band)
 evals/workbuddy/vendor/
+# benchmark run outputs (keep summarized reports in docs/evals instead)
+evals/workbuddy/results/

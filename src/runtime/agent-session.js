@@ -146,6 +146,21 @@ export class EdithRuntime {
     return core + context + skills;
   }
 
+  // Compaction must trigger before the model's context window fills; the
+  // runtime default (50k tokens) exceeds small local models' windows, so
+  // EDITH derives the threshold from the selected model's context length.
+  agentRuntimeConfig(model) {
+    const contextLength = model?.contextLength ?? 32768;
+    return {
+      context_management: {
+        compaction: {
+          enabled: true,
+          compaction_threshold_tokens: Math.max(4000, Math.floor(contextLength * 0.6))
+        }
+      }
+    };
+  }
+
   async ensureAgents() {
     const mcpServers = [{
       name: CAPABILITY_SERVER_NAME,
@@ -162,7 +177,8 @@ export class EdithRuntime {
       await this.client.upsertAgent(LOCAL_AGENT, {
         model: { name: localModel.ref },
         instructions,
-        mcp_servers: mcpServers
+        mcp_servers: mcpServers,
+        config: this.agentRuntimeConfig(localModel)
       });
       this.localModelRef = localModel.ref;
     }
@@ -172,7 +188,8 @@ export class EdithRuntime {
       await this.client.upsertAgent(CLOUD_AGENT, {
         model: { name: cloudModel.ref },
         instructions,
-        mcp_servers: mcpServers
+        mcp_servers: mcpServers,
+        config: this.agentRuntimeConfig(cloudModel)
       });
       this.cloudModelRef = cloudModel.ref;
     }

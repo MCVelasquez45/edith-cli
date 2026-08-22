@@ -8,7 +8,13 @@
   },
   "scripts": {
     "test": "node --test",
-    "start": "node ./bin/edith.js"
+    "start": "node ./bin/edith.js",
+    "eval:workbuddy:setup": "bash evals/workbuddy/scripts/setup.sh",
+    "eval:workbuddy:build": "bash evals/workbuddy/scripts/build-mount.sh",
+    "eval:workbuddy:dry": "bash evals/workbuddy/scripts/eval.sh dry",
+    "eval:workbuddy:smoke": "bash evals/workbuddy/scripts/eval.sh smoke",
+    "eval:workbuddy:code": "bash evals/workbuddy/scripts/eval.sh code",
+    "eval:workbuddy:report": "bash evals/workbuddy/scripts/eval.sh report"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -4,17 +4,21 @@
 ![Node](https://img.shields.io/badge/node-%3E%3D20-339933)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Local-first AI orchestration from one terminal.
+A local-first AI coding agent and assistant. One command opens the whole product:
 
-EDITH is a provider-agnostic terminal agent for coordinating local language models, specialist coding agents, MCP tools, web research, personal context, and Google Workspace from a single native CLI.
+```bash
+$ edith
+```
 
-Hybrid processing is documented in [docs/HYBRID_PROCESSING.md](docs/HYBRID_PROCESSING.md). EDITH classifies requests and data before selecting local models, NVIDIA NIM, specialist agents, or retrieval tools. Personal, sensitive, and secret data remain behind the local egress boundary by default.
+EDITH runs a real agent loop — reason → tool → observe → reason → answer — on your local models (Ollama, LM Studio), against your actual workspace, with persistent sessions, skills, human approvals for destructive actions, and a hidden, self-managed runtime. You never start servers, register providers, or manage tool registries.
+
+Data governance is enforced ahead of every turn ([docs/HYBRID_PROCESSING.md](docs/HYBRID_PROCESSING.md)): SECRET data never leaves the machine, and cloud models only ever see PUBLIC-classified, sanitized payloads.
 
 ## Overview
 
-EDITH runs locally on macOS and exposes a conversational terminal interface through `edith`. It discovers local model providers, routes work to the right local or specialist agent, applies security policy before tools run, and keeps personal context local by default.
+`edith` detects your workspace (repo, branch, project type, commands, instructions), supervises its embedded TrueForge runtime, serves its coding tools over a loopback capability service, and drives everything through a single-pane terminal UX. Sessions survive restarts (`edith --continue`). Destructive actions pause for your approval. Ctrl+C cancels the current action, never your session.
 
-The current milestone is an early infrastructure foundation. It is not a production-certified assistant, but the major integration paths have been verified end to end.
+Acceptance status: 33/34 gate capabilities PASS (the remaining one is a cloud live-turn blocked only on credentials) — see [docs/qa/EDITH-E2E-PRODUCT-GATE.md](docs/qa/EDITH-E2E-PRODUCT-GATE.md).
 
 ## Why EDITH
 
@@ -31,60 +35,48 @@ Most AI tooling is split across separate CLIs, cloud agents, local model servers
 
 ```mermaid
 flowchart TD
-    User[User] --> TUI[EDITH Native TUI]
-    TUI --> Core[Router / Orchestrator]
+    User[User] --> App[EDITH single-pane CLI]
+    App --> Gov[Governance: classify -> egress policy -> approvals]
+    Gov --> RT[TrueForge runtime - supervised, SQLite, loopback]
 
-    Core --> Models[Local Models]
-    Models --> LM[LM Studio]
+    RT --> Models[Models]
     Models --> Ollama[Ollama]
-    Models --> NVIDIA[NVIDIA NIM]
+    Models --> LM[LM Studio]
+    Models --> Cloud[NVIDIA via key-injection proxy]
 
-    Core --> Agents[Specialist Agents]
-    Agents --> OpenCode[OpenCode]
-    Agents --> Codex[Codex]
-    Agents --> Claude[Claude Code]
+    RT --> Cap[EDITH capability service - loopback MCP]
+    Cap --> FS[read / search / edit files]
+    Cap --> Git[git status / diff / log]
+    Cap --> Shell[shell / tests / lint / typecheck]
+    Cap --> Skills[read_skill]
+    Cap --> Del[delegate_specialist]
 
-    Core --> Tools[Tool Registry]
-    Tools --> MCP[MCP]
-    Tools --> Web[Web Search / Fetch / Docs]
-    Tools --> Git[Git + Workspace]
-    Tools --> System[System Awareness]
+    Del --> Claude[Claude Code]
+    Del --> Codex[Codex]
+    Del --> OpenCode[OpenCode]
 
-    Core --> Context[Personal Context Engine]
-    Context --> Calendar[Google Calendar]
-    Context --> Gmail[Gmail]
-    Context --> Drive[Google Drive]
-    Context --> Docs[Google Docs]
-    Context --> Tasks[Google Tasks]
-    Context --> Contacts[Google Contacts]
-    Context --> GitHub[GitHub]
-    Context --> GitLab[GitLab]
-
-    Policy[Security / Policy Boundary] -.-> Core
-    Policy -.-> Tools
-    Policy -.-> Context
-    Policy -.-> Agents
-
-    Keychain[macOS Keychain] -.-> Context
-    Audit[Audit Log] -.-> Policy
+    Keychain[macOS Keychain] -.-> Gov
+    Sessions[Session index ~/.edith] -.-> App
+    Audit[Telemetry + audit logs] -.-> Gov
 ```
+
+Full details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Security boundaries include macOS Keychain storage, action confirmation, workspace path controls, MCP allowlists, SSRF protection, external-agent isolation, and audit logging.
 
 ## Features
 
-- Native conversational terminal UI via `edith`
-- Model discovery and streaming through LM Studio, Ollama, and optional NVIDIA NIM
-- Dedicated coding mode via `edith code` and OpenCode
-- Delegation to Codex, Claude Code, and OpenCode
-- MCP client/server foundation with allowlisted tools
-- General, current/news, official, documentation, and community web search modes
-- Safe public web fetch with SSRF/private-network protections
-- Google Workspace OAuth profiles with Keychain token storage
-- Google Calendar, Gmail, Drive, Docs, Tasks, and Contacts connectors
-- GitHub and GitLab read-only context
-- Time-aware personal briefing engine
-- Confirmation policy for sensitive, external, and destructive actions
+- Real agent loop on local models: multi-step reasoning with live tool calls, token streaming, and visible activity
+- Coding toolset with safety classes — READ auto-runs, WRITE follows policy, DESTRUCTIVE requires your approval
+- Persistent sessions: `edith --continue`, `edith --resume <id>`, `edith sessions`; conversations survive restarts and context compacts automatically
+- Workspace awareness: repo, branch, project type, package manager, test/lint commands, `EDITH.md`/`AGENTS.md` instructions
+- Skills (`SKILL.md`) in core, user (`~/.edith/skills`), and workspace (`.edith/skills`) tiers, loaded on demand
+- Specialist delegation to Claude Code, Codex, and OpenCode — agent-chosen or direct (`edith ask`, `edith code`)
+- Ctrl+C cancels the current action and preserves the session
+- Headless mode for scripts and CI: `edith run --json -p "<task>"`
+- Self-managed runtime: auto start/health/reuse/recovery; `edith doctor` diagnoses everything with fixes
+- Local-first security: SECRET never leaves the machine; cloud is PUBLIC-only and sanitized; provider keys are injected at request time and never persisted by the runtime; Keychain-backed Google auth
+- Web research, Google Workspace connectors, and personal context preserved from earlier milestones (read-only, policy-gated)
 
 ## Quick Start
 
@@ -107,18 +99,25 @@ edith
 Implemented commands include:
 
 ```bash
-edith                 # launch native EDITH conversational TUI
+edith                 # open the interactive agent
+edith --continue      # resume the latest session in this workspace
+edith --resume <id>   # resume a specific session
+edith --model <name>  # start on a model or class (local-fast, coding, ...)
+edith --strict        # approvals for write operations too
+edith run -p "<task>" # one headless agent turn (add --json for JSONL)
+edith sessions        # list sessions for this workspace
+edith runtime status  # background runtime health (also: stop | restart)
+edith doctor          # diagnostics with remediation
 edith code            # launch OpenCode specialist coding TUI
 edith chat            # direct local-model chat
 edith models          # live local model inventory
-edith providers       # local provider health
-edith agents          # specialist agent health
-edith tools list      # normalized tool registry
-edith doctor          # live diagnostics
+edith tools list      # agent toolset with safety classes
 edith context status  # personal-context connector status
 edith auth status     # OAuth profile status
 edith mcp status      # EDITH-owned MCP server status
 ```
+
+Inside a session: `/help /model /sessions /new /skills /tools /status /context /details /verbose /doctor /exit`.
 
 Automation-oriented delegation is available through:
 
@@ -131,30 +130,37 @@ edith ask opencode --auto "Inspect this repo"
 
 ## Example Session
 
+Real transcript shape (from the acceptance E2E run):
+
 ```text
 $ edith
 
-EDITH
-Local AI Orchestrator
+EDITH   ~/project   main   local · qwen3-8b
+────────────────────────────────────────────
+Ask anything, or / for commands.
 
-qwen/qwen3-vl-4b · LM Studio
-~/project · repo ~/project · main
-agents OpenCode · Claude · Codex   tools ready
+> Find why the tests are failing and fix the code. Re-run to confirm.
 
-> What time is it?
-● Checking local time
-EDITH: The current time in your local timezone is ...
+● Thinking…
+● Running tests
+  $ npm test
+  1 failed, 1 passed
+● Read src/cart.js
+● Edit src/cart.js
+  Edited src/cart.js (1 replacement, line delta +0)
+● Running tests
+  $ npm test
+  2 passed
 
-> Search the web for the latest developments in local AI.
-● Searching web
-● Fetching reuters.com
-EDITH: ...
-Sources:
-1. ...
+The failure was an incorrect calculation in cartTotal() — price minus
+quantity instead of price times quantity. Fixed and all tests pass.
+✓ Done
 
-> What needs my attention in GitHub or GitLab?
-● Checking GitHub/GitLab review context
-EDITH: ...
+> Delete old-data.txt
+
+■ Approval required
+  delete_file {"path":"old-data.txt"}
+  Allow? [y/N]
 ```
 
 ## Local Models
@@ -287,15 +293,22 @@ edith doctor
 
 ```text
 bin/                 executable entrypoint
-src/auth/            OAuth, token storage, action policy
+src/app/             interactive single-pane app, turn rendering, headless mode
+src/runtime/         TrueForge supervisor, API client, event model, models, key proxy
+src/capability/      loopback MCP capability service and coding toolset
+src/routing/         governance: request analysis and egress policy
+src/sessions/        durable session index
+src/workspace/       workspace detection and context
+src/skills/          SKILL.md discovery and loading
+skills/              bundled core skills
+src/agents/          OpenCode, Codex, Claude adapters + delegation tool
+src/auth/            OAuth, Keychain token storage, action policy
 src/context/         personal context connectors and briefing
 src/network/         web search, fetch, docs, SSRF policy
-src/mcp/             MCP client/server integration
-src/agents/          OpenCode, Codex, Claude adapters
-src/native/          EDITH native agent core and TUI
-src/tools/           normalized tool registry and workspace tools
-test/                unit and integration-style tests
-docs/                engineering documentation
+src/mcp/             MCP client/server for external hosts
+src/providers/       direct local-model utilities (chat, models, doctor)
+test/                unit, integration, and contract tests
+docs/                engineering and product documentation
 ```
 
 ## Documentation
@@ -333,13 +346,9 @@ Deferred:
 
 ## Project Status
 
-EDITH has reached the verified infrastructure milestone:
+EDITH has completed its end-to-end product build: a TrueForge-backed agent loop, persistent sessions, skills, approvals, interrupts, and a single-pane CLI, with the legacy regex-router architecture fully retired.
 
-```text
-EDITH FULL INFRASTRUCTURE: 100% VERIFIED
-```
-
-This repository remains an early-development foundation. `edith doctor` is the live source of truth for the current machine.
+Acceptance gate (2026-08-22): **33 PASS / 1 PARTIAL** (cloud live-turn, blocked only on credentials) — [docs/qa/EDITH-E2E-PRODUCT-GATE.md](docs/qa/EDITH-E2E-PRODUCT-GATE.md). Regression suite: 148/148. `edith doctor` is the live source of truth for the current machine.
 
 ## License
 

@@ -52,3 +52,52 @@ Assessed against the current live path: native cockpit (`src/native/*`) with reg
 - Sprint 9 (Hardening): `edith doctor`, E2E suite, Regression suite kept green throughout.
 
 Update this table with dated re-assessments as sprints land; never mark a row PASS without a reproducible check.
+
+---
+
+## Final assessment — 2026-08-22 (post E2E product build, TrueForge-backed runtime, legacy retired)
+
+Assessed against the shipped path: `edith` → `EdithRuntime` (src/runtime/agent-session.js) → supervised TrueForge (standalone, SQLite under `~/.edith/runtime`) → loopback MCP capability service (19+ tools) → Ollama `qwen3:8b`. Regex router and legacy runtime removed (MIGRATE→VERIFY→REMOVE; commit d53a685). All live checks below were reproduced on this machine on 2026-08-22.
+
+| Capability | Status | Evidence (reproducible) |
+| --- | --- | --- |
+| `edith` launches interactive agent | PASS | scripted run of `bin/edith.js`: header → agent turn → ✓ Done (single-pane app, src/app/edith-app.js) |
+| TrueForge lifecycle automatic | PASS | supervisor live gate: cold start 1.25s, `[::1]` bind handled, reuse, adopt, clean shutdown; `edith runtime status\|stop\|restart` |
+| Workspace detected | PASS | root/branch/project/package-manager/instructions in agent context (test/workspace.test.js); shown in header |
+| Git awareness | PASS | git_status/diff/log/branch tools; branch+dirty in context block; agent used git_log correctly in live check |
+| Natural conversation | PASS | no intent regex anywhere on the path; model-driven turns |
+| Real agent loop | PASS | live: reason → search_files → list_directory → read_file → answer (3 tool round-trips) with planted-fact proof |
+| Token streaming | PASS | live deltas rendered (91 answer chars streamed; 1266 reasoning deltas separated) |
+| Tool streaming | PASS | live tool-call/tool-result events with args (chunked-args accumulation verified in test/runtime-events.test.js) |
+| File read | PASS | read_file incl. line ranges; secret-path refusal; redaction (test/capability-toolset.test.js) |
+| File search | PASS | search_code / search_files (rg with grep fallback) |
+| File edit | PASS | E2E: agent fixed src/cart.js with edit_file (exact-match, uniqueness-guarded) |
+| Shell execution | PASS | run_command (destructive/system classes refused → gated tool); E2E ran npm test |
+| Test execution | PASS | run_tests auto-detects project command; E2E red→green |
+| Multi-step reasoning | PASS | E2E: run tests → read → edit → re-run → summarize |
+| Persistent session | PASS | TrueForge SQLite + EDITH session index; codeword recalled across full restart |
+| Resume session | PASS | `edith --continue` E2E: "What did we change?" answered correctly from memory |
+| Context compaction | PASS | live: agent.context.overwrite summaries in thread_context_log at configured threshold; EDITH sets threshold at 60% of model context (default 50k exceeded qwen3's 40k window) |
+| Local model | PASS | Ollama qwen3:8b end-to-end everywhere above |
+| Cloud model | PARTIAL (BLOCKED on credentials) | full path implemented — key-injection proxy, PUBLIC-only egress gate, sanitization, edith-cloud agent — but no NVIDIA_API_KEY exists on this machine to live-verify an actual cloud turn |
+| Skills | PASS | core/user/workspace SKILL.md tiers; live: agent loaded workspace skill via read_skill and followed it exactly |
+| MCP | PASS | loopback streamable-http capability service; TrueForge handshake + 19-tool discovery live |
+| Approval flow | PASS | live deny (file preserved) and allow (file deleted) through TF approval-resume protocol; y/N native prompt; E2E deny via binary |
+| Ctrl+C cancellation | PASS | PTY E2E: mid-generation \x03 → "Cancelled — session preserved" → redirect turn succeeded |
+| Diff visibility | PASS | edit results report replacements + line delta; git_diff on demand; /details full output |
+| Error recovery | PASS | friendly errors w/ remediation (turn-view tests); in-app runtime recovery loop |
+| Runtime recovery | PASS | supervisor restart/adopt tests; app re-starts runtime mid-session on failure |
+| `edith doctor` | PASS | directive-format output with per-failure remediation; exit code reflects issues |
+| Clean shutdown | PASS | capability service + key proxies closed on exit; supervisor shutdown SIGTERM→wait→SIGKILL tested |
+| Specialist delegation | PASS | delegate_specialist through the live TF loop (stub adapter); real adapters health-checked in doctor (all 3 installed) |
+| Security governance | PASS | EDITH is the policy decision point per turn (classify → egress → agent select/block) |
+| Egress policy | PASS | SECRET never leaves; cloud requires PUBLIC-only + sanitization (test/runtime-governance.test.js, test/hybrid-routing.test.js) |
+| Secret handling | PASS | Keychain auth untouched; provider keys via loopback injection proxy — never in TrueForge plaintext persistence; secret-path/output redaction |
+| E2E coding task | PASS | fixture repo: "find why tests fail and fix" → red→green with correct one-line fix + summary |
+| E2E resume | PASS | restart + `--continue`: change recalled with reasoning |
+| Local-only E2E | PASS | all E2E runs executed with `env -u NVIDIA_API_KEY` |
+| Full regression suite | PASS | 148/148 `node --test` (2026-08-22, post legacy removal) |
+
+**Summary: 33 PASS · 1 PARTIAL (cloud live-turn, blocked on credentials — code path complete and unit/governance-tested).**
+
+The single PARTIAL is a credentials gap, not an implementation gap: registering `NVIDIA_API_KEY` upgrades it to a live check with no code change (`edith` will register the provider through the key proxy and `/model cloud-reasoning` becomes selectable).

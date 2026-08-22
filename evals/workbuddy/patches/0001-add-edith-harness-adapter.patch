@@ -1,0 +1,22 @@
+diff --git a/src/workbuddy_bench/runner/harness_adapters.py b/src/workbuddy_bench/runner/harness_adapters.py
+index 6c0f040..037c8d9 100644
+--- a/src/workbuddy_bench/runner/harness_adapters.py
++++ b/src/workbuddy_bench/runner/harness_adapters.py
+@@ -80,6 +80,17 @@ HARNESS_ADAPTERS: dict[str, HarnessRuntimeAdapter] = {
+         proxy_url_env="CBC_PROXY_URL",
+         uses_anthropic_env=False,
+     ),
++    # MODIFIED for EDITH integration (EDITH project overlay; see the EDITH
++    # repo's evals/workbuddy/ -- this entry is applied by its setup script).
++    "edith": HarnessRuntimeAdapter(
++        harness_name="edith",
++        canonical_display_name="EDITH CLI",
++        harness_protocol="openai",
++        backend_base_env="EDITH_OPENAI_BASE_URL",
++        backend_key_env="EDITH_OPENAI_API_KEY",
++        proxy_url_env="EDITH_PROXY_URL",
++        uses_anthropic_env=False,
++    ),
+ }
+ 
+ 

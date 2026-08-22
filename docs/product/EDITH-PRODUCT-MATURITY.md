@@ -104,3 +104,37 @@ _Last updated: 2026-08-22 · Evidence-based assessment of the gap between today'
 | Reliability | Sprint 11 (foundations in 3–4) |
 | Product | Sprints 6, 9 |
 | QA | Continuous; completed in Sprint 11 |
+
+---
+
+## Re-assessment — 2026-08-22 (post E2E product build)
+
+The table above is preserved as the pre-build baseline. Scores below reflect the shipped TrueForge-backed product (148/148 tests; final gate: 33 PASS / 1 credentials-blocked PARTIAL in `../qa/EDITH-E2E-PRODUCT-GATE.md`). Do not inflate scores.
+
+| Capability | Was | Now | Target | Evidence |
+| --- | ---: | ---: | ---: | --- |
+| Chat agent | 2 | **4** | 5 | Model-driven conversation through the TrueForge loop; single-pane product UX; regex router deleted. Not 5: one local model family live-validated |
+| Agent loop | 1 | **4** | 5 | Real reason→tool→observe→reason loop live-proven (multi-step, planted-fact); approval-resume protocol; cancellation. Not 5: no subagent orchestration surfaced yet |
+| Local inference | 3 | **4** | 5 | Ollama discovery→TF custom provider→agents; LM Studio + generic OpenAI-compatible endpoints supported; doctor checks capability |
+| Cloud inference | 2 | **3** | 5 | Full governed path (key-injection proxy, PUBLIC-only, sanitization) implemented + tested; unverified live for lack of credentials |
+| Sessions | 1 | **4** | 5 | TrueForge SQLite persistence + EDITH session index (titles/workspace/recency); resume/continue verified across restart |
+| Context management | 1 | **4** | 5 | Bounded workspace block, bounded tool outputs, TF compaction live-verified; threshold derived from model context length |
+| Skills | 0 | **3** | 5 | Three-tier SKILL.md discovery with shadowing; progressive read_skill loading; live agent adherence proven. Not 4: no TF sandbox-mounted skills yet |
+| Tools | 2 | **4** | 5 | Single capability service, 19+ tools, safety classes, confinement + redaction, contract-tested over the same transport TF uses |
+| MCP | 2 | **4** | 5 | Streamable-http capability bus TF discovers live; stdio self-server retained for external hosts. Not 5: no third-party MCP servers wired through EDITH config yet |
+| Workspace awareness | 1 | **4** | 5 | Root/branch/status/profile/commands/instructions abstraction feeding agent context; tested incl. non-git dirs |
+| Specialist delegation | 2 | **4** | 5 | delegate_specialist through the live loop; availability-checked; direct access preserved |
+| Security | 3 | **4** | 5 | Per-turn classification + egress gating around the runtime; destructive tools approval-gated at the protocol level |
+| Governance | 3 | **4** | 5 | EDITH is the policy decision point ahead of every turn; blocked turns explain themselves; telemetry records approvals |
+| Secrets | 3 | **4** | 5 | Keychain preserved; provider keys never enter TF persistence (loopback injection proxy); redaction consolidated |
+| Approvals | 1 | **4** | 5 | Live deny/allow through TF's approval-resume protocol with native y/N UX; headless denies by default (--approve-all opt-in) |
+| Observability | 1 | **3** | 5 | JSONL per-turn telemetry (model, duration, tool/approval counts, outcome), secret-redacted; runtime log. Not 4: no metrics surface/tracing exporter |
+| Reliability | 2 | **4** | 5 | Supervisor health/adopt/restart; in-app runtime recovery; corrupted-index recovery; friendly failures with remediation |
+| Testing | 2 | **4** | 5 | 148 unit/integration/contract tests + four reproduced live E2E product tests (coding+resume, PTY interrupt, local-only, approval) |
+| Installation | 1 | **3** | 5 | npm install is fully self-contained (runtime bundled as dependency); first-run dirs auto-created. Not 4: no published package/installer |
+| Updates | 0 | **2** | 5 | Versioned config/session-index formats; runtime pinned by lockfile. No migration tooling yet |
+| Recovery | 0 | **4** | 5 | Durable state everywhere it matters + crash recovery paths tested (runtime death mid-session, corrupted session index) |
+| Voice | 0 | **0** | 5 | Unchanged: no voice code. Out of scope for this build |
+| UX | 2 | **4** | 5 | Single-pane conversation flow per approved mockup: compact header, ● activity, diff/line-delta summaries, clean errors, /commands, Ctrl+C semantics |
+
+**Summary: median 4 (production-ready core). Remaining below-4 areas: cloud live verification (credentials), skills-via-sandbox, observability surface, packaging/updates, voice.**

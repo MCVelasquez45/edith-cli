@@ -1,5 +1,7 @@
 # CURRENT AGENT ARCHITECTURE — EDITH CLI
 
+> **SUPERSEDED (2026-08-22).** This audit describes the pre-build regex-router architecture, which was retired after the TrueForge-backed runtime reached parity (see `../ARCHITECTURE.md` and `../qa/EDITH-E2E-PRODUCT-GATE.md`). Retained as a decision record.
+
 _Last updated: 2026-08-22 · Evidence-based audit of `/Users/markvelasquez/orca/edith-cli` (`src/` ≈ 7,800 LOC, Node ≥20, ESM). Every claim below is traced to a file and symbol. Items that could not be verified are marked `UNVERIFIED`._
 
 > **Scope note.** EDITH CLI is a **standalone, local-first assistant/coding terminal**. It is not part of any fundraiser or downstream product repo. This document describes only what is actually in this repository.

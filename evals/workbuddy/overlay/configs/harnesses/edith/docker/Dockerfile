@@ -10,6 +10,12 @@ ARG EDITH_VERSION
 ARG MOUNT_PATH=/opt/edith
 LABEL org.edith.version=${EDITH_VERSION}
 
+# Toolchain for native deps (better-sqlite3) when no prebuild matches this
+# node ABI/arch; builder-stage only — the scratch output ships none of it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY edith-src.tar.gz /tmp/edith-src.tar.gz
 RUN mkdir -p /out/app \
     && tar -xzf /tmp/edith-src.tar.gz -C /out/app \
