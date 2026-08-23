@@ -97,6 +97,7 @@ Raw outputs: `evals/workbuddy/vendor/workbuddy-bench/results/<job>/<timestamp>/`
 | Symptom | Look at |
 |---|---|
 | trial exception | `results/<job>/<ts>/<trial>/exception.txt`, `trial.log` |
+| `RewardFileNotFoundError` | the dataset has no `configs/bench/<dataset_id>.yaml` layer, so `verifier.import_path` never reached Harbor and the `tests/test.sh` stub ran. Add the bench layer (see overlay `configs/bench/edith-smoke-v0.1.yaml`), re-run setup |
 | agent behavior | `<trial>/agent/edith-output.txt` (JSONL events + result envelope) |
 | verifier outcome | `<trial>/verifier/test_output.txt`, `reward.json` |
 | harness mount missing | `npm run eval:workbuddy:build` |

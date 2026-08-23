@@ -1,0 +1,21 @@
+# Per-benchmark bench config for the EDITH smoke dataset.
+#
+# Deep-merged ON TOP of configs/bench/_default.yaml by
+# workbuddy_bench.runner.bench_config.load_bench, selected when a job declares
+# ``dataset: datasets/edith-smoke-v0.1/tasks``. Without this layer load_bench
+# silently falls back to _default alone, which carries NO verifier.import_path
+# — Harbor then runs its built-in shared verifier against the tests/test.sh
+# format stub and dies with RewardFileNotFoundError.
+#
+# Grading runs through workbuddy_bench.judge:CompositeVerifier, same as the
+# real wb-bench datasets; task behavior resolves from each task's
+# tests/verifier.toml via the dataset's shared/verifier plugin.
+
+n_attempts: 1
+timeout_multiplier: 1.0
+
+verifier:
+  import_path: "workbuddy_bench.judge:CompositeVerifier"
+
+llm_judge:
+  enabled: false
