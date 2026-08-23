@@ -10,19 +10,11 @@ edith
 
 Launches the native EDITH conversational TUI.
 
-Normal conversation is typed directly into the composer. EDITH starts in a compact cockpit showing workspace, model, runtime, tool count, agent availability, and routing mode.
+Normal conversation is typed directly into the composer. EDITH starts in a compact cockpit showing workspace, model, runtime, tool count, and agent availability.
 
-Multiline paste is atomic when the terminal supports bracketed paste: EDITH waits for the paste end marker before routing or generating. Blank lines, lists, code blocks, and Unicode are preserved. A trailing `\\` on a typed line keeps the existing continuation behavior. Pasted blocks that begin with `/` are treated as user content when they contain newlines; slash commands execute only as an explicitly submitted single-line command.
+Multiline paste is atomic when the terminal supports bracketed paste: EDITH waits for the paste end marker before generating. Blank lines, lists, code blocks, and Unicode are preserved. A trailing `\\` on a typed line keeps the existing continuation behavior. Pasted blocks that begin with `/` are treated as user content when they contain newlines; slash commands execute only as an explicitly submitted single-line command.
 
-The routing control shows:
-
-```text
-[AUTO] CLAUDE CODEX OPENCODE LOCAL
-```
-
-`AUTO` lets EDITH choose the path. Use `/agent <name>` to pin routing, or prefix one prompt with `@codex`, `@claude`, `@opencode`, or `@local`.
-
-EDITH shows compact action/status events for tools and delegation, then streams one assistant response:
+EDITH shows compact action/status events for tools, then streams one assistant response:
 
 ```text
 > What's the weather in Mesa?
@@ -36,28 +28,51 @@ EDITH:
 Session commands:
 
 ```text
-/help       Show session commands
-/model      Show or switch model
-/models     List live models
-/agents     Show specialist agents
-/agent      Show or pin routing mode
-/tools      Show approved tools
-/tasks      Show session task activity
-/context    Show personal-context connector status
-/brief      Build an on-demand personal brief
-/status     Show current session status
-/trace      Show the last route/tool trace
-/verbose    Toggle operational timings
-/doctor     Run live diagnostics
-/clear      Clear conversation context
-/exit       Leave EDITH
+/help                    Show session commands
+/model [name]            Show or switch model (classes: local-fast, local-reasoning, coding, cloud-reasoning)
+/sessions                List sessions for this workspace
+/session rename <title>  Rename the current session
+/new                     Start a fresh session
+/skills                  List available skills
+/tools                   List agent tools with safety class
+/status                  Model, workspace, session, policy
+/context                 Show the workspace context the agent sees
+/details                 Full tool output from the last turn
+/verbose                 Toggle timings and runtime diagnostics
+/doctor                  Run diagnostics
+/exit                    Leave EDITH
 ```
 
 ```bash
-edith --model <provider:model>
+edith --model <provider:model>   # start with a specific model or class (e.g. local-fast)
+edith --continue                 # resume the latest session in this workspace
+edith --resume <id>              # resume a specific session
+edith --strict                   # require approval for write operations too
 ```
 
-Launches EDITH with a selected model when available.
+## Sessions
+
+```bash
+edith sessions                   # list sessions for this workspace
+```
+
+Sessions survive restarts and context compacts automatically. Resume with `edith --continue` or `edith --resume <id>`.
+
+## Headless
+
+```bash
+edith run -p "<task>"            # run one agent turn without the TUI and exit
+```
+
+Flags: `--workspace DIR`, `--model SEL`, `--json` (JSONL events + final result object), `--approve-all` (allow gated tools — explicit, auditable opt-in), `--timeout SECONDS` (default 600), `--strict`. The prompt may also be piped on stdin. Exit codes: `0` completed · `1` failed · `2` usage error · `124` cancelled/timeout.
+
+## Runtime
+
+```bash
+edith runtime status             # background runtime health (starts automatically with `edith`)
+edith runtime stop
+edith runtime restart
+```
 
 ## Coding
 
@@ -120,3 +135,14 @@ edith mcp discover
 ```
 
 `edith mcp add` and `edith mcp remove` are intentionally not implemented yet.
+
+## Authentication
+
+```bash
+edith auth status                                       # show authentication status
+edith auth google --profile personal --scope calendar   # connect Google Workspace via local OAuth
+edith auth google --profile personal --upgrade          # upgrade the personal profile for assistant actions
+edith auth logout google                                 # remove local Google tokens
+```
+
+Tokens are stored in the macOS Keychain; non-secret metadata lives under `~/.config/edith`. Running `edith auth google` without OAuth client credentials prints setup instructions.
