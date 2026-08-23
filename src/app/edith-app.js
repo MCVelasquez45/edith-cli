@@ -10,7 +10,7 @@ import { EdithRuntime } from '../runtime/agent-session.js';
 import { EdithState } from '../runtime/events.js';
 import { SessionStore } from '../sessions/store.js';
 import { AtomicInputComposer } from '../native/input-composer.js';
-import { TurnView, friendlyError } from './turn-view.js';
+import { TurnView, friendlyError, toolActivityLabel } from './turn-view.js';
 import { colors } from '../ui/terminal.js';
 import { loadConfig } from '../config.js';
 import { runDoctor } from '../doctor.js';
@@ -37,7 +37,7 @@ export async function runEdithApp({ cwd = process.cwd(), ui, args = [] }) {
   };
   try {
     await runtime.start({
-      onStatus: (stage) => bootLine(`● ${stageLabel(stage)}`),
+      onStatus: (stage) => bootLine(`◆ ${stageLabel(stage)}`),
       modelSelection: flags.model ?? config.defaults?.runtimeModel ?? null
     });
   } catch (error) {
@@ -79,7 +79,7 @@ export async function runEdithApp({ cwd = process.cwd(), ui, args = [] }) {
 
   try {
     while (true) {
-      composer.prompt(colors.green('\n> '));
+      composer.prompt(`\n${colors.green('> ')}`, { placeholder: 'Ask anything, or / for commands.' });
       const entry = await composer.read();
       if (entry.type === 'eof') break;
       if (entry.type === 'cancel') continue;
@@ -103,14 +103,13 @@ export async function runEdithApp({ cwd = process.cwd(), ui, args = [] }) {
         model: runtime.selection?.ref,
         agent: runtime.agentForSelection()
       });
-      ui.line(colors.dim(`You: ${text.length > 120 ? `${text.slice(0, 120)}…` : text}`));
       try {
         const result = await runtime.runTurn({
           sessionId: state.session.id,
           text,
           signal: controller.signal,
           onEvent: (event) => { recorder.onEvent(event); view.handle(event); },
-          requestApproval: async (approval) => promptApproval({ approval, ui, composer })
+          requestApproval: async (approval) => promptApproval({ approval, ui, composer, workspaceRoot, verbose: state.verbose })
         });
         view.finish(result);
         await recorder.finish(result);
@@ -186,18 +185,20 @@ function printHeader(ui, runtime, session) {
   ].filter(Boolean);
   ui.line(parts.join('   '));
   ui.line(colors.dim('─'.repeat(Math.min(output.columns ?? 72, 72))));
-  ui.line(colors.dim('Ask anything, or / for commands.'));
 }
 
-async function promptApproval({ approval, ui, composer }) {
+async function promptApproval({ approval, ui, composer, workspaceRoot, verbose = false }) {
   ui.line('');
-  ui.line(`${colors.yellow('■')} ${colors.bold('Approval required')}`);
+  ui.line(`${colors.yellow('■')} ${colors.bold('EDITH wants to:')}`);
   for (const call of approval.toolCalls) {
-    const args = call.args ? JSON.stringify(call.args) : '';
-    ui.line(`  ${call.tool ?? 'tool'} ${colors.dim(args.length > 90 ? `${args.slice(0, 90)}…` : args)}`);
+    ui.line(`    ${toolActivityLabel(call.tool, call.args, workspaceRoot)}`);
+    if (verbose && call.args) {
+      const args = JSON.stringify(call.args);
+      ui.line(colors.dim(`      ${args.length > 160 ? `${args.slice(0, 160)}…` : args}`));
+    }
   }
   composer.setPaused(false);
-  composer.prompt(colors.yellow('  Allow? [y/N] '));
+  composer.prompt(colors.yellow('  Approve? [y/N] '));
   const entry = await composer.read();
   composer.setPaused(true);
   const answer = entry.type === 'line' ? entry.text.trim().toLowerCase() : 'n';

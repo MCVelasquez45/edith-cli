@@ -73,6 +73,106 @@ describe('native input composer', () => {
     assert.deepEqual(await read, { type: 'cancel', text: '' });
   });
 
+  it('typing never emits a newline or vertical movement (per-char line-skip regression)', () => {
+    const composer = testComposer();
+    composer.start();
+    composer.prompt('\n\x1b[32m> \x1b[0m');
+    composer.read();
+    const before = composer.output.text();
+    composer.handleData(Buffer.from('what time is it'));
+    const typed = composer.output.text().slice(before.length);
+    assert.ok(!typed.includes('\n'), 'no newline while typing');
+    assert.ok(!/\x1b\[\d*[AB]/.test(typed), 'no vertical cursor movement while typing');
+    assert.equal(composer.line, 'what time is it');
+  });
+
+  it('stores only the last prompt line for redraws, emitting leading newlines once', () => {
+    const composer = testComposer();
+    composer.start();
+    composer.prompt('\n> ');
+    assert.equal(composer.promptText, '> ');
+    composer.handleData(Buffer.from('abc'));
+    assert.equal((composer.output.text().match(/\n/g) ?? []).length, 1);
+  });
+
+  it('Delete key removes forward instead of inserting a literal tilde', () => {
+    const composer = testComposer();
+    composer.start();
+    composer.read();
+    composer.handleData(Buffer.from('abc'));
+    composer.handleData(Buffer.from('\x1b[D\x1b[D')); // left ×2 → cursor after "a"
+    composer.handleData(Buffer.from('\x1b[3~'));      // delete forward → "ac"
+    assert.equal(composer.line, 'ac');
+    assert.equal(composer.cursor, 1);
+  });
+
+  it('Home and End position the cursor at the line boundaries', () => {
+    const composer = testComposer();
+    composer.start();
+    composer.read();
+    composer.handleData(Buffer.from('hello'));
+    composer.handleData(Buffer.from('\x1b[H'));
+    assert.equal(composer.cursor, 0);
+    composer.handleData(Buffer.from('\x1b[F'));
+    assert.equal(composer.cursor, 5);
+    composer.handleData(Buffer.from('\x1b[1~'));
+    assert.equal(composer.cursor, 0);
+    composer.handleData(Buffer.from('\x1b[4~'));
+    assert.equal(composer.cursor, 5);
+  });
+
+  it('backspace removes a whole emoji grapheme, not half a surrogate pair', () => {
+    const composer = testComposer();
+    composer.start();
+    composer.read();
+    composer.handleData(Buffer.from('hi 👍'));
+    composer.handleData(Buffer.from('\x7f'));
+    assert.equal(composer.line, 'hi ');
+    composer.handleData(Buffer.from('\x7f'));
+    assert.equal(composer.line, 'hi');
+  });
+
+  it('a single-line bracketed paste inserts at the cursor instead of submitting', async () => {
+    const composer = testComposer();
+    composer.start();
+    const read = composer.read();
+    composer.handleData(Buffer.from('see '));
+    composer.handleData(Buffer.from('\x1b[200~https://example.com\x1b[201~'));
+    assert.equal(composer.line, 'see https://example.com');
+    composer.handleData(Buffer.from('\r'));
+    assert.equal((await read).text, 'see https://example.com');
+  });
+
+  it('submitting leaves the entry in the transcript as a single prompt line', async () => {
+    const composer = testComposer();
+    composer.start();
+    composer.prompt('> ');
+    const read = composer.read();
+    composer.handleData(Buffer.from('hello\r'));
+    await read;
+    assert.ok(composer.output.text().includes('> hello\n'));
+  });
+
+  it('Up arrow recalls the most recent entry, Down returns to empty', async () => {
+    const composer = testComposer();
+    composer.start();
+    const first = composer.read();
+    composer.handleData(Buffer.from('older entry\r'));
+    await first;
+    const second = composer.read();
+    composer.handleData(Buffer.from('newest entry\r'));
+    await second;
+    composer.read();
+    composer.handleData(Buffer.from('\x1b[A'));
+    assert.equal(composer.line, 'newest entry');
+    composer.handleData(Buffer.from('\x1b[A'));
+    assert.equal(composer.line, 'older entry');
+    composer.handleData(Buffer.from('\x1b[B'));
+    assert.equal(composer.line, 'newest entry');
+    composer.handleData(Buffer.from('\x1b[B'));
+    assert.equal(composer.line, '');
+  });
+
   it('accepts a bounded large paste without loss or duplication', async () => {
     const composer = testComposer();
     composer.start();

@@ -99,8 +99,9 @@ export async function runDoctor({ cwd, ui }) {
   // Keychain-backed auth
   try {
     for (const row of await new AuthRegistry().status()) {
-      if (row.status === 'CONNECTED') ok(`Auth ${row.name}`, `${row.account ?? ''} · ${row.storage ?? 'Keychain'}`);
-      else ui.line(`${colors.green('✓')} Auth ${row.name}: ${row.status.toLowerCase()} ${colors.dim('— optional')}`);
+      const label = row.profile ? `${row.name} (${row.profile})` : row.name;
+      if (row.status === 'CONNECTED') ok(`Auth ${label}`, `${row.account ?? ''} · ${row.storage ?? 'Keychain'}`);
+      else ui.line(`${colors.green('✓')} Auth ${label}: ${row.status.toLowerCase()} ${colors.dim('— optional')}`);
     }
   } catch { /* auth stack optional */ }
 

@@ -24,6 +24,7 @@
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@truefoundry/trueforge": "^0.1.4",
+    "string-width": "^4.2.3",
     "zod": "^4.4.3"
   }
 }

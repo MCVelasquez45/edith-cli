@@ -70,7 +70,7 @@ export class TerminalUI {
 
   symbol(kind) {
     const unicode = {
-      working: colors.cyan('●'),
+      working: colors.cyan('◆'),
       success: colors.green('✓'),
       error: colors.red('✗'),
       warning: colors.yellow('!'),

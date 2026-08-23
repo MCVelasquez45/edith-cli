@@ -1,7 +1,7 @@
 // Renders EDITH's normalized turn events as the single-pane activity flow:
 //
-//   ● Read src/auth/session.ts
-//   ● Running tests
+//   ◆ Read src/auth/session.ts
+//   ◆ Running tests
 //     $ npm test -- auth
 //     2 failed, 18 passed
 //   ✓ Fixed authentication session refresh handling.
@@ -112,7 +112,9 @@ function clampLines(lines, max) {
 
 function truncate(value, width) {
   const text = String(value);
-  return text.length <= width ? text : `${text.slice(0, width - 1)}…`;
+  if (text.length <= width) return text;
+  const points = [...text]; // avoid slicing through a surrogate pair
+  return points.length <= width ? text : `${points.slice(0, width - 1).join('')}…`;
 }
 
 export class TurnView {
@@ -133,7 +135,7 @@ export class TurnView {
       case 'reasoning-delta':
         if (!this.thinkingShown) {
           this.thinkingShown = true;
-          this.ui.line(`${colors.cyan('●')} ${colors.dim('Thinking…')}`);
+          this.ui.line(`${colors.cyan('◆')} ${colors.dim('Thinking…')}`);
         }
         return;
       case 'tool-call': {
@@ -142,7 +144,7 @@ export class TurnView {
         this.endStream();
         const label = toolActivityLabel(event.tool, event.args, this.workspace);
         this.lastToolCall.set(event.toolCallId, event.tool);
-        this.ui.line(`${colors.cyan('●')} ${label}`);
+        this.ui.line(`${colors.cyan('◆')} ${label}`);
         return;
       }
       case 'tool-result': {
@@ -179,7 +181,7 @@ export class TurnView {
         this.ui.line(colors.dim(`  ${event.approved ? 'approved' : 'denied'}: ${event.tools.filter(Boolean).join(', ')}`));
         return;
       case 'subagent-start':
-        this.ui.line(`${colors.cyan('●')} ${colors.dim('Subagent working…')}`);
+        this.ui.line(`${colors.cyan('◆')} ${colors.dim('Subagent working…')}`);
         return;
       case 'runtime':
         if (this.verbose) this.ui.line(colors.gray(`  · ${event.detail}`));
